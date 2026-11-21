@@ -1,0 +1,10 @@
+# score.py
+numpy
+scipy
+# download.py
+h5py
+pandas
+pyarrow
+scikit-learn
+# tests
+pytest
