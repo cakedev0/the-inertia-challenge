@@ -7,7 +7,8 @@ The listener does not depend on what the queue is: it takes any object with the
 two methods of `Queue`. A submission is from a user, for a dataset: a `.npz`
 file as for `inertia-score`, with one uint32 array per number of clusters, for
 some or all the numbers of clusters of the dataset. The user can say how long
-the clustering took (`time_s`, in seconds) and on what hardware, and add tags:
+the clustering took for each number of clusters (`time_s`, in seconds) and on
+what hardware, and add tags:
 free text about the submission, as `{"algorithm": "Lloyd"}`, of at most 4 kB.
 The listener publishes what the user says and can't check it.
 `HttpQueue` is the queue of the server of the scoreboard, and `DirectoryQueue`
@@ -48,10 +49,14 @@ import urllib.error
 import urllib.request
 import zipfile
 
-import numpy as np
-
 from .challenge import Dataset, Reader, get_dataset
-from .score import DEFAULT_CHUNK_MB, DEFAULT_THREADS, checksum_warning, score_labels
+from .score import (
+    DEFAULT_CHUNK_MB,
+    DEFAULT_THREADS,
+    checksum_warning,
+    read_labels,
+    score_labels,
+)
 
 # A score is published when its inertia is below (1 + RECORD_MARGIN) * best.
 RECORD_MARGIN = 0.05
@@ -61,8 +66,6 @@ MAX_HARDWARE_LENGTH = 200
 # Of the tags of a submission, as JSON in UTF-8.
 MAX_TAGS_BYTES = 4096
 ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,64}")
-# Bytes of a `.npy` file before the values, with a margin.
-NPY_HEADER = 4096
 
 
 @dataclass
@@ -73,7 +76,9 @@ class Submission:
     # The queue says who the user is: the listener trusts it.
     user: str
     # What the user says about the submission, published with the scores.
-    time_s: float | None = None  # time of the clustering, in seconds
+    # Seconds of the clustering, for each number of clusters: {64: 23.21}. As
+    # it comes from JSON, the keys can also be strings.
+    time_s: dict = field(default_factory=dict)
     hardware: str | None = None  # as "2 x Xeon 6972P, 192 cores"
     tags: dict[str, str] = field(default_factory=dict)  # as {"algorithm": "Lloyd"}
 
@@ -99,7 +104,7 @@ class DirectoryQueue:
     """A queue in a directory.
 
     A submission `<id>` is two files in `directory/pending`: `<id>.npz`, and
-    `<id>.json` with `{"dataset": "<name>", "user": "<name>", "time_s": 23.21,
+    `<id>.json` with `{"dataset": "<name>", "user": "<name>", "time_s": {"64": 23.21},
     "hardware": "...", "tags": {...}}` (the last three are optional). The sender
     writes the `.json` last, with a rename. Once the submission is processed,
     the two files are removed and the result is in `directory/done/<id>.json`.
@@ -123,7 +128,7 @@ class DirectoryQueue:
                 ticket = json.loads(path.read_text())
                 submission.dataset = ticket["dataset"]
                 submission.user = ticket["user"]
-                submission.time_s = ticket.get("time_s")
+                submission.time_s = ticket.get("time_s", {})
                 submission.hardware = ticket.get("hardware")
                 submission.tags = ticket.get("tags", {})
             except (ValueError, KeyError, TypeError):
@@ -197,7 +202,7 @@ class HttpQueue:
             ticket["dataset"],
             labels,
             ticket["user"],
-            ticket.get("time_s"),
+            ticket.get("time_s") or {},
             ticket.get("hardware"),
             ticket.get("tags", {}),
         )
@@ -209,7 +214,30 @@ class HttpQueue:
         submission.labels.unlink(missing_ok=True)
 
 
-def check_metadata(user, time_s, hardware, tags) -> None:
+def check_times(time_s) -> dict[int, float]:
+    """The times of a submission as {n_clusters: seconds}. Raise a ValueError if
+    they are not a mapping from numbers of clusters to positive numbers."""
+    error = ValueError(
+        "The times are a mapping from a number of clusters to a positive number "
+        f"of seconds, as {{64: 23.21}}, got {time_s!r}."
+    )
+    if not isinstance(time_s, dict):
+        raise error
+    times = {}
+    for key, seconds in time_s.items():
+        if (
+            isinstance(key, bool)
+            or not (isinstance(key, int) or (isinstance(key, str) and key.isdecimal()))
+            or isinstance(seconds, bool)
+            or not isinstance(seconds, (int, float))
+            or not 0 < seconds < math.inf
+        ):
+            raise error
+        times[int(key)] = float(seconds)
+    return times
+
+
+def check_metadata(user, hardware, tags) -> None:
     """Raise a ValueError if the metadata of a submission can't be published."""
     if not isinstance(user, str) or not 1 <= len(user) <= MAX_USER_LENGTH:
         raise ValueError(
@@ -217,12 +245,6 @@ def check_metadata(user, time_s, hardware, tags) -> None:
         )
     if not user.isprintable():
         raise ValueError(f"The user has characters that can't be printed: {user!r}.")
-    if time_s is not None and (
-        isinstance(time_s, bool)
-        or not isinstance(time_s, (int, float))
-        or not 0 < time_s < math.inf
-    ):
-        raise ValueError(f"The time is a positive number of seconds, got {time_s!r}.")
     if hardware is not None and (
         not isinstance(hardware, str)
         or not 1 <= len(hardware) <= MAX_HARDWARE_LENGTH
@@ -323,36 +345,6 @@ class Results:
         self._git("clean", "-fdq", "scores")
 
 
-def read_labels(dataset: Dataset, path):
-    """Yield (n_clusters, labels) for the arrays of the submission `path`.
-
-    Nothing is read before the names and the sizes of all the arrays are checked,
-    as the file comes from anyone.
-    """
-    with zipfile.ZipFile(path) as archive:
-        keys = {}
-        for info in archive.infolist():
-            key = info.filename.removesuffix(".npy")
-            if not key.isdecimal() or int(key) not in dataset.n_clusters:
-                raise ValueError(
-                    f"The keys of a submission for {dataset.name} are among "
-                    f"{', '.join(map(str, dataset.n_clusters))}, got {key!r}."
-                )
-            if int(key) in keys:
-                raise ValueError(f"The submission has {int(key)} clusters twice.")
-            if info.file_size > 4 * dataset.n_samples + NPY_HEADER:
-                raise ValueError(
-                    f"The array {key!r} is too large for uint32 labels of shape "
-                    f"({dataset.n_samples},)."
-                )
-            keys[int(key)] = key
-    if not keys:
-        raise ValueError("The submission is empty.")
-    with np.load(path) as submission:
-        for n_clusters in sorted(keys):
-            yield n_clusters, submission[keys[n_clusters]]
-
-
 def process(
     submission: Submission,
     results: Results,
@@ -369,9 +361,8 @@ def process(
     """
     try:
         dataset = get_dataset(submission.dataset)
-        check_metadata(
-            submission.user, submission.time_s, submission.hardware, submission.tags
-        )
+        check_metadata(submission.user, submission.hardware, submission.tags)
+        times = check_times(submission.time_s)
     except (ValueError, TypeError) as error:
         return rejected(submission, str(error))
 
@@ -405,6 +396,7 @@ def process(
             else:
                 outcome = "discarded"
             outcomes.append(score | {"outcome": outcome, "previous_best": best})
+            time_s = times.pop(n_clusters, None)
             # A submission processed twice (the listener stopped between the push
             # and the end) is already there.
             already = any(
@@ -415,10 +407,15 @@ def process(
                 continue
             line = {"submission": submission.id, "user": submission.user, "date": now}
             line |= score
-            line["time_s"] = submission.time_s
+            line["time_s"] = time_s
             line["hardware"] = submission.hardware
             line["tags"] = submission.tags
             results.add_score(dataset, line)
+        if times:
+            raise ValueError(
+                f"The submission has a time for {', '.join(map(str, sorted(times)))} "
+                "clusters, but no labels."
+            )
         if any(
             outcome["outcome"] != "discarded" for outcome in outcomes
         ) and results._git("status", "--porcelain"):

@@ -77,7 +77,11 @@ def test_best_recorded_discarded(setup):
     X, blobs, queue, results, remote = setup
     dataset = challenge.DATASETS["toy"]
 
-    metadata = {"time_s": 23.21, "hardware": "M2", "tags": {"algorithm": "Lloyd"}}
+    metadata = {
+        "time_s": {"4": 23.21},
+        "hardware": "M2",
+        "tags": {"algorithm": "Lloyd"},
+    }
     submit(queue, "first", {4: noisy(blobs, 4, 1)}, **metadata)
     listener.listen(queue, results, once=True)
     first = result_of(queue, "first")
@@ -112,7 +116,7 @@ def test_best_recorded_discarded(setup):
         ("close", 4),
     ]
     assert lines[0]["user"] == "ada"
-    assert {key: lines[0][key] for key in metadata} == metadata
+    assert {key: lines[0][key] for key in metadata} == metadata | {"time_s": 23.21}
     assert {key: lines[1][key] for key in metadata} == {
         "time_s": None,
         "hardware": None,
@@ -169,10 +173,13 @@ def test_rejected(setup, labels, dataset, match):
         ({"user": "a" * 65}, "The user is a string"),
         ({"user": 3}, "The user is a string"),
         ({"user": "a\nb"}, "can't be printed"),
-        ({"time_s": "23.21"}, "positive number of seconds"),
-        ({"time_s": 0}, "positive number of seconds"),
-        ({"time_s": True}, "positive number of seconds"),
-        ({"time_s": float("inf")}, "positive number of seconds"),
+        ({"time_s": 23.21}, "The times are a mapping"),
+        ({"time_s": {"4": "23.21"}}, "The times are a mapping"),
+        ({"time_s": {"4": 0}}, "The times are a mapping"),
+        ({"time_s": {"4": True}}, "The times are a mapping"),
+        ({"time_s": {"4": float("inf")}}, "The times are a mapping"),
+        ({"time_s": {"four": 1.5}}, "The times are a mapping"),
+        ({"time_s": {"4": 1.5, "16": 2}}, "a time for 16 clusters, but no labels"),
         ({"hardware": ""}, "The hardware is a line of text"),
         ({"hardware": "a" * 201}, "The hardware is a line of text"),
         ({"hardware": ["M2"]}, "The hardware is a line of text"),
@@ -273,7 +280,8 @@ def server():
 def test_http_queue(setup, server, tmp_path):
     X, blobs, queue, results, remote = setup
     np.savez(tmp_path / "labels.npz", **{"4": blobs})
-    ticket = {"id": "0b1e-first", "dataset": "toy", "user": "ada", "time_s": 23.21}
+    ticket = {"id": "0b1e-first", "dataset": "toy", "user": "ada"}
+    ticket["time_s"] = {"4": 23.21}
     server.submissions.append((ticket, (tmp_path / "labels.npz").read_bytes()))
     invalid = {"id": "second", "dataset": "toy", "user": "ada", "hardware": "M2"}
     server.submissions.append((invalid, b"not a zip file"))

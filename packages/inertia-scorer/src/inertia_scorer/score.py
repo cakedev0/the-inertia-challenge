@@ -34,10 +34,12 @@ import zipfile
 import numpy as np
 import scipy.sparse as sp
 
-from .challenge import SHA256, Reader, get_dataset
+from .challenge import SHA256, Dataset, Reader, get_dataset
 
 DEFAULT_CHUNK_MB = 100
 DEFAULT_THREADS = 4
+# Bytes of a `.npy` file before the values, with a margin.
+NPY_HEADER = 4096
 
 
 @dataclass
@@ -69,6 +71,37 @@ def check_labels(labels, n_clusters: int, n_samples: int) -> None:
         raise ValueError(
             f"The labels must be in [0, {n_clusters}), got a label {largest}."
         )
+
+
+def read_labels(dataset: Dataset, path):
+    """Yield (n_clusters, labels) for the arrays of the submission `path`.
+
+    Unlike `score_submission`, it only takes the numbers of clusters of the
+    dataset, and nothing is read before the names and the sizes of all the arrays
+    are checked: this is for a file that comes from anyone.
+    """
+    with zipfile.ZipFile(path) as archive:
+        keys = {}
+        for info in archive.infolist():
+            key = info.filename.removesuffix(".npy")
+            if not key.isdecimal() or int(key) not in dataset.n_clusters:
+                raise ValueError(
+                    f"The keys of a submission for {dataset.name} are among "
+                    f"{', '.join(map(str, dataset.n_clusters))}, got {key!r}."
+                )
+            if int(key) in keys:
+                raise ValueError(f"The submission has {int(key)} clusters twice.")
+            if info.file_size > 4 * dataset.n_samples + NPY_HEADER:
+                raise ValueError(
+                    f"The array {key!r} is too large for uint32 labels of shape "
+                    f"({dataset.n_samples},)."
+                )
+            keys[int(key)] = key
+    if not keys:
+        raise ValueError("The submission is empty.")
+    with np.load(path) as submission:
+        for n_clusters in sorted(keys):
+            yield n_clusters, submission[keys[n_clusters]]
 
 
 def _chunk_sums(reader: Reader, labels, start: int, stop: int):

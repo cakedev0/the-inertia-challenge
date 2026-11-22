@@ -4,11 +4,17 @@ build-backend = "hatchling.build"
 
 [project]
 name = "inertia-client"
-version = "0.0.0"
-description = "Client of the scoreboard of the inertia challenge (not written yet)"
+version = "0.1.0"
+description = "Submit labels to the inertia challenge, a scoreboard for k-means"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["inertia-scorer", "numpy"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+inertia-client = "inertia_client.client:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/inertia_client"]
