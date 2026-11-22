@@ -33,7 +33,7 @@
     color: var(--ink);
     font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
   }
-  main { max-width: 1000px; margin: 0 auto; padding: 32px 16px 64px; }
+  main { max-width: 1200px; margin: 0 auto; padding: 32px 16px 64px; }
   h1 { font-size: 26px; margin: 0 0 8px; }
   h2 { font-size: 17px; margin: 32px 0 4px; }
   p { margin: 0 0 12px; max-width: 70ch; }
@@ -60,6 +60,7 @@
   td.number, th.number { text-align: right; }
   td.number, td.user, td.date { white-space: nowrap; }
   td.user { max-width: 24ch; overflow: hidden; text-overflow: ellipsis; }
+  td.hardware { min-width: 14ch; max-width: 28ch; }
   tr.best td { background: var(--best); }
   td:first-child, th:first-child { padding-left: 8px; }
   .tags { display: flex; flex-wrap: wrap; gap: 4px 6px; }
@@ -82,7 +83,8 @@
   </p>
   <p class="muted">
     A score is listed when it is less than 5% above the best one at the time it
-    is submitted. The datasets and the scoring are in
+    is submitted. The time, the hardware and the tags are what the user says
+    about the submission: they are not checked. The datasets and the scoring are in
     <a href="https://github.com/cakedev0/the-inertia-challenge">the repository</a>.
   </p>
 
@@ -143,7 +145,7 @@ async function loadScores(name) {
 function table(dataset, nClusters, rows) {
   const section = element("section");
   section.append(element("h2", `${nClusters.toLocaleString("en")} clusters`));
-  rows = rows.slice().sort((a, b) => a.inertia - b.inertia || a.time.localeCompare(b.time));
+  rows = rows.slice().sort((a, b) => a.inertia - b.inertia || a.date.localeCompare(b.date));
   const count = rows.length;
   if (viewSelect.value === "users") {
     const seen = new Set();
@@ -164,7 +166,8 @@ function table(dataset, nClusters, rows) {
   const head = result.createTHead().insertRow();
   const columns = [
     ["#", "number"], ["User", ""], ["Inertia / n_samples", "number"],
-    ["Above the best", "number"], ["Tags", ""], ["Date", ""],
+    ["Above the best", "number"], ["Time (s)", "number"], ["Hardware", ""],
+    ["Tags", ""], ["Date", ""],
   ];
   for (const [title, className] of columns) {
     const cell = element("th", title, className);
@@ -185,6 +188,12 @@ function table(dataset, nClusters, rows) {
     line.append(inertia);
     const gap = best > 0 ? 100 * (row.inertia / best - 1) : 0;
     line.append(element("td", index === 0 ? "best" : `+${gap.toFixed(3)}%`, "number"));
+    // 3 significant digits, and no exponent.
+    const time = row.time_s == null ? "" : Number(row.time_s.toPrecision(3)).toLocaleString("en");
+    line.append(element("td", time, "number"));
+    const hardware = element("td", row.hardware ?? "", "hardware");
+    hardware.title = row.hardware ?? "";
+    line.append(hardware);
     const tags = element("div", undefined, "tags");
     for (const [key, value] of Object.entries(row.tags || {})) {
       const tag = element("span", undefined, "tag");
@@ -195,8 +204,8 @@ function table(dataset, nClusters, rows) {
     const tagsCell = element("td");
     tagsCell.append(tags);
     line.append(tagsCell);
-    const date = element("td", row.time.slice(0, 10), "date");
-    date.title = row.time;
+    const date = element("td", row.date.slice(0, 10), "date");
+    date.title = row.date;
     line.append(date);
   });
   const scroll = element("div", undefined, "scroll");

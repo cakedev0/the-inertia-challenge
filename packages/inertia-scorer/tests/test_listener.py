@@ -50,13 +50,12 @@ def setup(tmp_path, monkeypatch):
     return X, blobs, DirectoryQueue(tmp_path / "queue"), Results(clone), remote
 
 
-def submit(queue, name, labels, dataset="toy", user="ada", tags=None):
+def submit(queue, name, labels, dataset="toy", user="ada", **metadata):
     np.savez(
         queue.pending_dir / f"{name}.npz", **{str(k): v for k, v in labels.items()}
     )
     ticket = {"dataset": dataset, "user": user}
-    if tags is not None:
-        ticket["tags"] = tags
+    ticket |= metadata
     (queue.pending_dir / f"{name}.json").write_text(json.dumps(ticket))
 
 
@@ -76,7 +75,8 @@ def test_best_recorded_discarded(setup):
     X, blobs, queue, results, remote = setup
     dataset = challenge.DATASETS["toy"]
 
-    submit(queue, "first", {4: noisy(blobs, 4, 1)}, tags={"time (s)": "23.21"})
+    metadata = {"time_s": 23.21, "hardware": "M2", "tags": {"algorithm": "Lloyd"}}
+    submit(queue, "first", {4: noisy(blobs, 4, 1)}, **metadata)
     listener.listen(queue, results, once=True)
     first = result_of(queue, "first")
     assert first["status"] == "scored"
@@ -109,8 +109,13 @@ def test_best_recorded_discarded(setup):
         ("better", 16),
         ("close", 4),
     ]
-    assert lines[0]["user"] == "ada" and lines[0]["tags"] == {"time (s)": "23.21"}
-    assert lines[1]["tags"] == {}
+    assert lines[0]["user"] == "ada"
+    assert {key: lines[0][key] for key in metadata} == metadata
+    assert {key: lines[1][key] for key in metadata} == {
+        "time_s": None,
+        "hardware": None,
+        "tags": {},
+    }
 
     # Everything is pushed, one commit per submission with something published,
     # with the scores only.
@@ -156,20 +161,27 @@ def test_rejected(setup, labels, dataset, match):
 
 
 @pytest.mark.parametrize(
-    "user, tags, match",
+    "metadata, match",
     [
-        ("", {}, "The user is a string"),
-        ("a" * 65, {}, "The user is a string"),
-        (3, {}, "The user is a string"),
-        ("a\nb", {}, "can't be printed"),
-        ("ada", {"time (s)": 23.21}, "mapping of text to text"),
-        ("ada", ["fast"], "mapping of text to text"),
-        ("ada", {"notes": "é" * 2100}, "the limit is 4096"),
+        ({"user": ""}, "The user is a string"),
+        ({"user": "a" * 65}, "The user is a string"),
+        ({"user": 3}, "The user is a string"),
+        ({"user": "a\nb"}, "can't be printed"),
+        ({"time_s": "23.21"}, "positive number of seconds"),
+        ({"time_s": 0}, "positive number of seconds"),
+        ({"time_s": True}, "positive number of seconds"),
+        ({"time_s": float("inf")}, "positive number of seconds"),
+        ({"hardware": ""}, "The hardware is a line of text"),
+        ({"hardware": "a" * 201}, "The hardware is a line of text"),
+        ({"hardware": ["M2"]}, "The hardware is a line of text"),
+        ({"tags": {"threads": 8}}, "mapping of text to text"),
+        ({"tags": ["fast"]}, "mapping of text to text"),
+        ({"tags": {"notes": "é" * 2100}}, "the limit is 4096"),
     ],
 )
-def test_invalid_user_or_tags(setup, user, tags, match):
+def test_invalid_metadata(setup, metadata, match):
     X, blobs, queue, results, remote = setup
-    submit(queue, "invalid", {4: blobs}, user=user, tags=tags)
+    submit(queue, "invalid", {4: blobs}, **metadata)
 
     listener.listen(queue, results, once=True)
 

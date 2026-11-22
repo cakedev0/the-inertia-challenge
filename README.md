@@ -152,8 +152,10 @@ inertia-listener path/to/results --queue-dir path/to/queue
 ```
 
 A submission is from one user and for one dataset, with labels for some or all
-of its numbers of clusters. The user can add tags to it: free text as
-`{"time (s)": "23.21"}`, of at most 4 kB, published with the scores. For each of them, with `best` the lowest inertia published so far:
+of its numbers of clusters. The user can say how long the clustering took
+(`time_s`, in seconds) and on what hardware, and add tags: free text as
+`{"algorithm": "Lloyd"}`, of at most 4 kB. All of it is published with the
+scores, as the user gave it: the listener can't check it. For each of them, with `best` the lowest inertia published so far:
 
 - below `1.05 * best`, or no score yet: the score is published, in
   `scores/<dataset>.jsonl`;

@@ -5,14 +5,16 @@
 The listener does not depend on what the queue is: it takes any object with the
 two methods of `Queue`. A submission is from a user, for a dataset: a `.npz`
 file as for `inertia-score`, with one uint32 array per number of clusters, for
-some or all the numbers of clusters of the dataset. The user can add tags: free
-text about the submission, as `{"time (s)": "23.21"}`, of at most 4 kB.
+some or all the numbers of clusters of the dataset. The user can say how long
+the clustering took (`time_s`, in seconds) and on what hardware, and add tags:
+free text about the submission, as `{"algorithm": "Lloyd"}`, of at most 4 kB.
+The listener publishes what the user says and can't check it.
 `DirectoryQueue` is a queue in a directory, for tests and for a server on the
 same machine.
 
 The results are a clone of a git repository that only the listener writes to:
-`scores/<dataset>.jsonl` has one line per published score, with its user and
-its tags.
+`scores/<dataset>.jsonl` has one line per published score, with its user, time,
+hardware and tags.
 
 The labels are not kept.
 
@@ -31,6 +33,7 @@ import argparse
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -48,6 +51,7 @@ from .score import DEFAULT_CHUNK_MB, DEFAULT_THREADS, checksum_warning, score_la
 # A score is published when its inertia is below (1 + RECORD_MARGIN) * best.
 RECORD_MARGIN = 0.05
 MAX_USER_LENGTH = 64
+MAX_HARDWARE_LENGTH = 200
 # Of the tags of a submission, as JSON in UTF-8.
 MAX_TAGS_BYTES = 4096
 ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,64}")
@@ -62,9 +66,10 @@ class Submission:
     labels: Path  # local .npz file
     # The queue says who the user is: the listener trusts it.
     user: str
-    # Free text of the user about the submission, as {"time (s)": "23.21"}.
-    # Published with the scores.
-    tags: dict[str, str] = field(default_factory=dict)
+    # What the user says about the submission, published with the scores.
+    time_s: float | None = None  # time of the clustering, in seconds
+    hardware: str | None = None  # as "2 x Xeon 6972P, 192 cores"
+    tags: dict[str, str] = field(default_factory=dict)  # as {"algorithm": "Lloyd"}
 
 
 class Queue(Protocol):
@@ -88,10 +93,10 @@ class DirectoryQueue:
     """A queue in a directory.
 
     A submission `<id>` is two files in `directory/pending`: `<id>.npz`, and
-    `<id>.json` with `{"dataset": "<name>", "user": "<name>", "tags": {...}}`
-    (`tags` is optional). The sender writes the `.json` last, with a rename. Once the
-    submission is processed, the two files are removed and the result is in
-    `directory/done/<id>.json`.
+    `<id>.json` with `{"dataset": "<name>", "user": "<name>", "time_s": 23.21,
+    "hardware": "...", "tags": {...}}` (the last three are optional). The sender
+    writes the `.json` last, with a rename. Once the submission is processed,
+    the two files are removed and the result is in `directory/done/<id>.json`.
     """
 
     def __init__(self, directory):
@@ -112,6 +117,8 @@ class DirectoryQueue:
                 ticket = json.loads(path.read_text())
                 submission.dataset = ticket["dataset"]
                 submission.user = ticket["user"]
+                submission.time_s = ticket.get("time_s")
+                submission.hardware = ticket.get("hardware")
                 submission.tags = ticket.get("tags", {})
             except (ValueError, KeyError, TypeError):
                 self.done(submission, rejected(submission, "The ticket is invalid."))
@@ -128,19 +135,34 @@ class DirectoryQueue:
         submission.labels.unlink(missing_ok=True)
 
 
-def check_user_and_tags(user, tags) -> None:
-    """Raise a ValueError if `user` and `tags` can't be published."""
+def check_metadata(user, time_s, hardware, tags) -> None:
+    """Raise a ValueError if the metadata of a submission can't be published."""
     if not isinstance(user, str) or not 1 <= len(user) <= MAX_USER_LENGTH:
         raise ValueError(
             f"The user is a string of 1 to {MAX_USER_LENGTH} characters, got {user!r}."
         )
     if not user.isprintable():
         raise ValueError(f"The user has characters that can't be printed: {user!r}.")
+    if time_s is not None and (
+        isinstance(time_s, bool)
+        or not isinstance(time_s, (int, float))
+        or not 0 < time_s < math.inf
+    ):
+        raise ValueError(f"The time is a positive number of seconds, got {time_s!r}.")
+    if hardware is not None and (
+        not isinstance(hardware, str)
+        or not 1 <= len(hardware) <= MAX_HARDWARE_LENGTH
+        or not hardware.isprintable()
+    ):
+        raise ValueError(
+            f"The hardware is a line of text of 1 to {MAX_HARDWARE_LENGTH} "
+            f"characters, got {hardware!r}."
+        )
     if not isinstance(tags, dict) or not all(
         isinstance(item, str) for tag in tags.items() for item in tag
     ):
         raise ValueError(
-            'The tags are a mapping of text to text, as {"time (s)": "23.21"}.'
+            'The tags are a mapping of text to text, as {"algorithm": "Lloyd"}.'
         )
     size = len(json.dumps(tags, ensure_ascii=False).encode())
     if size > MAX_TAGS_BYTES:
@@ -273,7 +295,9 @@ def process(
     """
     try:
         dataset = get_dataset(submission.dataset)
-        check_user_and_tags(submission.user, submission.tags)
+        check_metadata(
+            submission.user, submission.time_s, submission.hardware, submission.tags
+        )
     except (ValueError, TypeError) as error:
         return rejected(submission, str(error))
 
@@ -315,8 +339,10 @@ def process(
             )
             if outcome == "discarded" or already:
                 continue
-            line = {"submission": submission.id, "user": submission.user, "time": now}
+            line = {"submission": submission.id, "user": submission.user, "date": now}
             line |= score
+            line["time_s"] = submission.time_s
+            line["hardware"] = submission.hardware
             line["tags"] = submission.tags
             results.add_score(dataset, line)
         if any(
