@@ -13,6 +13,7 @@
     --line: #dfe3e8;
     --accent: #1f5fbf;
     --best: #e9f1fd;
+    --tab: #f7931e;
     color-scheme: light dark;
   }
   @media (prefers-color-scheme: dark) {
@@ -40,21 +41,26 @@
   a { color: var(--accent); }
   code { font: 13px ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
   .muted { color: var(--ink-2); }
-  .controls {
-    display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center;
-    margin: 24px 0 8px; padding: 12px 0;
-    border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
-  }
   label { color: var(--ink-2); }
-  .tabs { display: flex; flex-wrap: wrap; gap: 6px; }
-  .tabs button {
-    font: inherit; color: var(--ink-2); background: none; cursor: pointer;
-    border: 1px solid var(--line); border-radius: 6px; padding: 3px 10px;
+  .tabs {
+    margin-top: 32px; border: 1px solid var(--line); border-radius: 6px;
+    overflow: hidden;
   }
-  .tabs button:hover { color: var(--ink); }
-  .tabs button[aria-selected="true"] {
-    color: var(--ink); background: var(--raised); border-color: var(--accent);
+  .tab-buttons {
+    display: flex; flex-wrap: wrap; background: var(--raised);
+    border-bottom: 1px solid var(--line);
   }
+  .tab-buttons button {
+    font: inherit; color: var(--ink-2); background: transparent; cursor: pointer;
+    border: 0; border-right: 1px solid var(--line); padding: 10px 14px;
+  }
+  .tab-buttons button:hover { color: var(--ink); }
+  .tab-buttons button[aria-selected="true"] {
+    color: var(--ink); background: var(--surface);
+    box-shadow: inset 0 -3px 0 var(--tab);
+  }
+  .tab-panel { padding: 16px; }
+  .tab-panel h2 { margin-top: 24px; }
   #tables:not(.with-tags) .tags-column { display: none; }
   .leaderboard { max-width: 640px; }
   .scroll { overflow-x: auto; }
@@ -95,12 +101,23 @@
     <a href="https://github.com/cakedev0/the-inertia-challenge">the repository</a>.
   </p>
 
-  <div class="controls">
-    <div id="tabs" class="tabs" role="tablist"></div>
-    <label id="tags-control"><input type="checkbox" id="show-tags"> Show the tags</label>
+  <h2>Leader board</h2>
+  <p class="muted">
+    A task is a dataset and a number of clusters. The users are ranked by the
+    mean, over the tasks that have a score, of how far their best inertia is
+    above the best one. The weight of a task is sqrt(n_samples * n_clusters),
+    and a task without a score of the user counts as 10% above the best.
+  </p>
+  <div id="leaderboard"></div>
+
+  <div class="tabs">
+    <div id="tabs" class="tab-buttons" role="tablist"></div>
+    <div class="tab-panel">
+      <p id="description" class="muted"></p>
+      <label><input type="checkbox" id="show-tags"> Show the tags</label>
+      <div id="tables"></div>
+    </div>
   </div>
-  <p id="description" class="muted"></p>
-  <div id="tables"></div>
 </main>
 
 <script>
@@ -116,15 +133,14 @@ if (override && ["localhost", "127.0.0.1"].includes(location.hostname)) {
   scoresUrl = override;
 }
 
-const LEADERBOARD = "leaderboard";
 // What a missing score counts for in the leader board, in % above the best. It
-// is the margin of the listener: a score that is listed was below it.
+// is the margin of the listener: a score that is listed was below it. The text
+// of the page has it too.
 const MISSING_GAP = 10;
 
 const tabs = document.getElementById("tabs");
-const tagsControl = document.getElementById("tags-control");
 const showTags = document.getElementById("show-tags");
-let selected = LEADERBOARD;
+let selected;
 const description = document.getElementById("description");
 const tables = document.getElementById("tables");
 let datasets = [];
@@ -283,19 +299,8 @@ function render() {
   for (const tab of tabs.children) {
     tab.setAttribute("aria-selected", String(tab.dataset.name === selected));
   }
-  tagsControl.hidden = selected === LEADERBOARD;
   tables.classList.toggle("with-tags", showTags.checked);
   history.replaceState(null, "", `#${selected}`);
-  if (selected === LEADERBOARD) {
-    description.textContent =
-      "A task is a dataset and a number of clusters. The users are ranked by " +
-      "the mean, over the tasks that have a score, of how far their best " +
-      "inertia is above the best one. The weight of a task is " +
-      "sqrt(n_samples * n_clusters), and a task without a score of the user " +
-      `counts as ${MISSING_GAP}% above the best.`;
-    tables.replaceChildren(leaderboard());
-    return;
-  }
   const dataset = datasets.find(dataset => dataset.name === selected);
   description.textContent =
     `${dataset.n_samples.toLocaleString("en")} samples, ` +
@@ -317,10 +322,9 @@ async function main() {
     tables.replaceChildren(element("p", `The scores could not be loaded: ${error.message}.`));
     return;
   }
-  const names = [[LEADERBOARD, "Leader board"]];
-  for (const dataset of datasets) names.push([dataset.name, dataset.name]);
-  for (const [name, title] of names) {
-    const tab = element("button", title);
+  document.getElementById("leaderboard").replaceChildren(leaderboard());
+  for (const {name} of datasets) {
+    const tab = element("button", name);
     tab.type = "button";
     tab.role = "tab";
     tab.dataset.name = name;
@@ -328,7 +332,9 @@ async function main() {
     tabs.append(tab);
   }
   const wanted = decodeURIComponent(location.hash.slice(1));
+  const withScores = datasets.find(dataset => scores[dataset.name].length);
   if (datasets.some(dataset => dataset.name === wanted)) selected = wanted;
+  else selected = (withScores ?? datasets[0]).name;
   showTags.addEventListener("change", render);
   render();
 }

@@ -181,7 +181,7 @@ listener pushes, so it needs no build: a new score shows up when the page is
 loaded again. `docs/datasets.json` is the list of the datasets, written from
 `inertia_scorer.challenge.DATASETS` (a test checks that it is up to date).
 
-The first tab is the leader board. It ranks the users by the mean, over the
+The leader board is above the tabs of the datasets. It ranks the users by the mean, over the
 tasks that have a score, of how far their best inertia is above the best one,
 in %. The weight of a task is `sqrt(n_samples * n_clusters)`, and a task
 without a score of the user counts as 10% above the best.
