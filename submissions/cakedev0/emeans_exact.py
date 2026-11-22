@@ -2,10 +2,14 @@
 
 A case is a dataset and a number of clusters. For each case, EMeans is fitted
 with several seeds and numbers of epochs for as long as the total stays in the
-budget (100 s), and the labels of the lowest inertia are kept. A case is too
-slow when its first fit (5 epochs, seed 0) takes more than the budget: it gets
-no labels. A case with `n_samples * n_features * n_clusters >= MAX_COST` is
-not tried.
+budget (100 s), and the labels of the lowest inertia are kept.
+
+A case that is too slow gets no labels. It is one of:
+
+- `n_samples * n_features * n_clusters >= MAX_COST`: nothing is fitted.
+- The probe, a fit of half an epoch with `PROBE`, takes more than a tenth of
+  the budget (10 s).
+- The first fit (5 epochs, seed 0) ends after the budget.
 
     pip install -e packages/inertia-scorer -e packages/inertia-client \
         sklearn-contrib-emeans==0.4.1
@@ -36,16 +40,26 @@ TRIES += [(20, seed) for seed in SEEDS]
 # 1e11 of them per second on the dense datasets with ~100 features or more, so
 # 100 s is around 1e13.
 MAX_COST = 3e13
+# The probe of a case: a cheap fit that says if the case is worth trying. It is
+# too slow when it takes more than `PROBE_BUDGET` times the budget.
+PROBE = {"init": "random", "revival": 0.1, "n_epochs": 0.5}
+PROBE_BUDGET = 0.1
 # A try runs when `MARGIN` times its expected time fits in what is left.
 MARGIN = 1.2
 
 
 def fit_case(X, n_clusters, budget):
-    """Return the tries of a case and the labels of the best one, or None when
-    the case is too slow."""
+    """Return the time of the probe of a case, its tries and the labels of the
+    best one, or None when the case is too slow. The probe counts in the budget."""
     from sklearn_emeans import EMeans
 
-    tries, labels, spent = [], None, 0.0
+    start = time.perf_counter()
+    EMeans(n_clusters=n_clusters, random_state=0, **PROBE).fit(X)
+    probe = spent = time.perf_counter() - start
+    print(f"  {n_clusters} clusters, probe: {probe:.2f} s", flush=True)
+    tries, labels = [], None
+    if probe > PROBE_BUDGET * budget:
+        return probe, tries, None
     for n_epochs, seed in TRIES:
         if tries:
             # Above the real time for a first try with this many epochs: the
@@ -77,8 +91,8 @@ def fit_case(X, n_clusters, budget):
             }
         )
         if spent > budget and len(tries) == 1:
-            return tries, None
-    return tries, labels
+            return probe, tries, None
+    return probe, tries, labels
 
 
 def fit(args):
@@ -118,6 +132,7 @@ def fit(args):
             "version": sklearn_emeans.__version__,
             "params": PARAMS,
             "budget_s": args.budget,
+            "probe_s": {},
             "cases": {},
             "too_slow": {},
         }
@@ -131,7 +146,8 @@ def fit(args):
             if X is None:
                 print(f"{name}: reading", flush=True)
                 X = reader.read(0, n_samples)
-            tries, best = fit_case(X, n_clusters, args.budget)
+            probe, tries, best = fit_case(X, n_clusters, args.budget)
+            result["probe_s"][n_clusters] = probe
             if best is None:
                 print(f"{name}, {n_clusters} clusters: too slow")
                 result["too_slow"][n_clusters] = cost
@@ -148,7 +164,8 @@ def metadata(result):
     """The times and the tags of a submission, from the `.json` of `fit`."""
     time_s, best = {}, []
     for n_clusters, tries in result["cases"].items():
-        time_s[int(n_clusters)] = round(sum(t["time_s"] for t in tries), 2)
+        total = result["probe_s"][n_clusters] + sum(t["time_s"] for t in tries)
+        time_s[int(n_clusters)] = round(total, 2)
         kept = min(tries, key=lambda t: t["inertia"])
         best.append(
             f"{n_clusters}: n_epochs={kept['n_epochs']} seed={kept['seed']} "
@@ -162,7 +179,8 @@ def metadata(result):
         "selection": (
             "Lowest inertia over several seeds and numbers of epochs, as many "
             f"as fit in {result['budget_s']:g} s for each number of clusters. "
-            "The time is the total of the tries, without reading the data."
+            "The time is the total of the tries and of a short fit that checks "
+            "the case is not too slow, without reading the data."
         ),
         "best": "; ".join(best),
     }
