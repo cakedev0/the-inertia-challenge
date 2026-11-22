@@ -23,7 +23,7 @@ The labels are not kept.
 For each number of clusters of a submission, with `best` the lowest inertia
 published so far:
 
-- inertia < 1.05 * best, or no score yet: the score is published;
+- inertia < 1.1 * best, or no score yet: the score is published;
 - else nothing is published.
 
 Each submission that publishes something is one commit, pushed right away.
@@ -59,7 +59,7 @@ from .score import (
 )
 
 # A score is published when its inertia is below (1 + RECORD_MARGIN) * best.
-RECORD_MARGIN = 0.05
+RECORD_MARGIN = 0.1
 TOKEN_VARIABLE = "INERTIA_QUEUE_TOKEN"
 MAX_USER_LENGTH = 64
 MAX_HARDWARE_LENGTH = 200

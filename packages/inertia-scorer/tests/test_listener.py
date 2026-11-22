@@ -94,7 +94,7 @@ def test_best_recorded_discarded(setup):
     submit(queue, "bad", {4: noisy(blobs, 300, 2)})
     # The best one, and a number of clusters without a score yet.
     submit(queue, "better", {4: blobs, 16: (blobs + 4 * (X[:, 0] > 0)).astype("u4")})
-    # Above the best, by less than 5%.
+    # Above the best, by less than 10%.
     submit(queue, "close", {4: noisy(blobs, 1, 3)})
     listener.listen(queue, results, once=True)
 
@@ -106,7 +106,7 @@ def test_best_recorded_discarded(setup):
     assert better["scores"][0]["previous_best"] == first["scores"][0]["inertia"]
     close = result_of(queue, "close")["scores"][0]
     assert close["outcome"] == "recorded"
-    assert close["previous_best"] < close["inertia"] < 1.05 * close["previous_best"]
+    assert close["previous_best"] < close["inertia"] < 1.1 * close["previous_best"]
 
     lines = results.scores(dataset)
     assert [(line["submission"], line["n_clusters"]) for line in lines] == [
