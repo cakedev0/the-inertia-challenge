@@ -4,7 +4,8 @@ A case is a dataset and a number of clusters. For each case, EMeans is fitted
 with several seeds and numbers of epochs for as long as the total stays in the
 budget (100 s), and the labels of the lowest inertia are kept. A case is too
 slow when its first fit (5 epochs, seed 0) takes more than the budget: it gets
-no labels. A case with `n_samples * n_clusters >= MAX_SIZE` is not tried.
+no labels. A case with `n_samples * n_features * n_clusters >= MAX_COST` is
+not tried.
 
     pip install -e packages/inertia-scorer -e packages/inertia-client \
         sklearn-contrib-emeans==0.4.1
@@ -30,9 +31,11 @@ PARAMS = {"init": "k-means||", "revival": "greedy"}
 SEEDS = range(10)
 TRIES = [(n_epochs, seed) for seed in SEEDS for n_epochs in (5, 10)]
 TRIES += [(20, seed) for seed in SEEDS]
-# Cases of at least this many samples * clusters are not tried: they are far
-# from fitting in 100 s.
-MAX_SIZE = 1e12
+# Cases of at least this many n_samples * n_features * n_clusters are not tried.
+# On one socket of the Xeon 6787P (86 cores), the first fit goes through about
+# 1e11 of them per second on the dense datasets with ~100 features or more, so
+# 100 s is around 1e13.
+MAX_COST = 3e13
 # A try runs when `MARGIN` times its expected time fits in what is left.
 MARGIN = 1.2
 
@@ -121,7 +124,7 @@ def fit(args):
         labels, X = {}, None
         for n_clusters in dataset.n_clusters:
             cost = n_values * n_clusters
-            if n_samples * n_clusters >= MAX_SIZE or any(c <= cost for c in slow):
+            if cost >= MAX_COST or any(c <= cost for c in slow):
                 print(f"{name}, {n_clusters} clusters: skipped, too slow")
                 result["too_slow"][n_clusters] = cost
                 continue
