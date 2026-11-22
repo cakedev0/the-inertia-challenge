@@ -9,8 +9,9 @@ A case that is too slow gets no labels. It is one of:
 - `n_samples * n_features * n_clusters >= MAX_COST`: nothing is fitted.
 - The probe, a fit of half an epoch with `PROBE`, takes more than a tenth of
   the budget (10 s).
-- The first fit (5 epochs, seed 0) ends after the budget.
-- A smaller number of clusters of the dataset was too slow.
+- A smaller number of clusters of the dataset was too slow, or its first fit
+  (5 epochs, seed 0) ended after the budget. That first fit is kept and
+  submitted, with its time.
 
     pip install -e packages/inertia-scorer -e packages/inertia-client \
         sklearn-contrib-emeans==0.4.1
@@ -91,8 +92,6 @@ def fit_case(X, n_clusters, budget):
                 "inertia": inertia,
             }
         )
-        if spent > budget and len(tries) == 1:
-            return probe, tries, None
     return probe, tries, labels
 
 
@@ -128,10 +127,10 @@ def fit(args):
             "cases": {},
             "too_slow": {},
         }
-        labels, X = {}, None
+        labels, X, slow = {}, None, False
         for n_clusters in dataset.n_clusters:
             cost = n_values * n_clusters
-            if cost >= MAX_COST or result["too_slow"]:
+            if cost >= MAX_COST or slow:
                 print(f"{name}, {n_clusters} clusters: skipped, too slow")
                 result["too_slow"][n_clusters] = cost
                 continue
@@ -143,9 +142,11 @@ def fit(args):
             if best is None:
                 print(f"{name}, {n_clusters} clusters: too slow")
                 result["too_slow"][n_clusters] = cost
+                slow = True
                 continue
             labels[n_clusters] = best
             result["cases"][n_clusters] = tries
+            slow = probe + sum(t["time_s"] for t in tries) > args.budget
         if labels:
             save_labels(args.out / f"{name}.npz", labels)
         path.write_text(json.dumps(result, indent=1))
@@ -169,7 +170,8 @@ def metadata(result):
         "n_cpus": str(result["n_cpus"]),
         "selection": (
             "Lowest inertia over several seeds and numbers of epochs, as many "
-            f"as fit in {result['budget_s']:g} s for each number of clusters. "
+            f"as fit in {result['budget_s']:g} s for each number of clusters "
+            "(a single fit when it takes longer). "
             "The time is the total of the tries and of a short fit that checks "
             "the case is not too slow, without reading the data."
         ),
