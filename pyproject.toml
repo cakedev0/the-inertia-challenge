@@ -6,7 +6,7 @@ select = ["E", "F", "W", "I"]
 
 [tool.ruff.lint.isort]
 force-sort-within-sections = true
+known-first-party = ["inertia_scorer", "inertia_client"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["."]
+testpaths = ["packages"]

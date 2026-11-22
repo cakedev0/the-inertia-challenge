@@ -1,0 +1,150 @@
+[
+ {
+  "name": "sift_128",
+  "n_samples": 1000000,
+  "n_features": 128,
+  "n_clusters": [
+   64,
+   256,
+   1024
+  ],
+  "description": "SIFT descriptors (train set of ann-benchmarks' sift-128-euclidean)",
+  "sparse": false
+ },
+ {
+  "name": "glove_200",
+  "n_samples": 1183514,
+  "n_features": 200,
+  "n_clusters": [
+   64,
+   256,
+   1024
+  ],
+  "description": "GloVe word vectors, not normalized (train set of ann-benchmarks' glove-200-angular)",
+  "sparse": false
+ },
+ {
+  "name": "clip_512",
+  "n_samples": 1000000,
+  "n_features": 512,
+  "n_clusters": [
+   64,
+   256,
+   1024
+  ],
+  "description": "CLIP ViT-B/32 image embeddings (Qdrant/wolt-food-clip-ViT-B-32-embeddings), L2-normalized, ~23% of exact duplicates",
+  "sparse": false
+ },
+ {
+  "name": "susy",
+  "n_samples": 5000000,
+  "n_features": 18,
+  "n_clusters": [
+   64,
+   256,
+   1024
+  ],
+  "description": "SUSY (UCI), simulated particle collisions, raw features",
+  "sparse": false
+ },
+ {
+  "name": "year_prediction_msd_standardized",
+  "n_samples": 515345,
+  "n_features": 90,
+  "n_clusters": [
+   64,
+   256,
+   1024
+  ],
+  "description": "YearPredictionMSD (UCI), audio features, standardized",
+  "sparse": false
+ },
+ {
+  "name": "road_network_km_x10",
+  "n_samples": 4348740,
+  "n_features": 3,
+  "n_clusters": [
+   64,
+   256,
+   1024
+  ],
+  "description": "3D Road Network (UCI) in kilometers, each point with 9 copies jittered by 5 m",
+  "sparse": false
+ },
+ {
+  "name": "20newsgroups",
+  "n_samples": 18846,
+  "n_features": 130107,
+  "n_clusters": [
+   64,
+   256,
+   1024
+  ],
+  "description": "20 Newsgroups, L2-normalized token counts",
+  "sparse": true
+ },
+ {
+  "name": "rcv1",
+  "n_samples": 804414,
+  "n_features": 47236,
+  "n_clusters": [
+   64,
+   256,
+   1024
+  ],
+  "description": "RCV1-v2 news stories, cosine-normalized log TF-IDF",
+  "sparse": true
+ },
+ {
+  "name": "deep_1M",
+  "n_samples": 1000000,
+  "n_features": 96,
+  "n_clusters": [
+   10000
+  ],
+  "description": "first 1M rows of DEEP1B",
+  "sparse": false
+ },
+ {
+  "name": "deep_5M",
+  "n_samples": 5000000,
+  "n_features": 96,
+  "n_clusters": [
+   50000
+  ],
+  "description": "first 5M rows of DEEP1B",
+  "sparse": false
+ },
+ {
+  "name": "deep_20M",
+  "n_samples": 20000000,
+  "n_features": 96,
+  "n_clusters": [
+   20000
+  ],
+  "description": "first 20M rows of DEEP1B",
+  "sparse": false
+ },
+ {
+  "name": "deep_100M",
+  "n_samples": 100000000,
+  "n_features": 96,
+  "n_clusters": [
+   10000,
+   1000000
+  ],
+  "description": "first 100M rows of DEEP1B",
+  "sparse": false
+ },
+ {
+  "name": "deep_500M",
+  "n_samples": 500000000,
+  "n_features": 96,
+  "n_clusters": [
+   500000,
+   5000000
+  ],
+  "description": "first 500M rows of DEEP1B",
+  "sparse": false
+ }
+]

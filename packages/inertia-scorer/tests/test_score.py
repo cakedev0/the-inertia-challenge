@@ -1,13 +1,12 @@
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
 import scipy.sparse as sp
 
-import challenge
-from challenge import Dataset, Reader
-import download
-import score
+from inertia_scorer import challenge, download, score
+from inertia_scorer.challenge import Dataset, Reader
 
 
 def brute_force_inertia(X, labels):
@@ -120,7 +119,7 @@ def test_prefix_of_shared_files(make_dataset, tmp_path, monkeypatch):
 def test_missing_dataset(make_dataset, tmp_path):
     dataset = make_dataset(dense_data())
     longer = Dataset("longer", 2000, 7, (4,), "", stem=dataset.stem)
-    with pytest.raises(challenge.DatasetNotFound, match="python download.py longer"):
+    with pytest.raises(challenge.DatasetNotFound, match="inertia-download longer"):
         Reader(longer, tmp_path)
     (tmp_path / "toy.json").unlink()
     with pytest.raises(challenge.DatasetNotFound):
@@ -166,3 +165,12 @@ def test_command_line(make_dataset, tmp_path, capsys):
         score.main(["toy", str(path), "--data-dir", str(tmp_path)])
     with pytest.raises(SystemExit, match="Unknown dataset"):
         score.main(["nope", str(path), "--data-dir", str(tmp_path)])
+
+
+def test_datasets_of_the_dashboard():
+    path = Path(__file__).parents[3] / "docs" / "datasets.json"
+    command = (
+        'python -c "from inertia_scorer.challenge import datasets_json as j; '
+        "print(j(), end='')\" > docs/datasets.json"
+    )
+    assert path.read_text() == challenge.datasets_json(), f"Run: {command}"

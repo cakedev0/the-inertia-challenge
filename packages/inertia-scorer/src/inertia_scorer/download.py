@@ -1,8 +1,8 @@
 """Download the datasets of the challenge, if they are not already there.
 
-    python download.py                      # list the datasets and what is there
-    python download.py sift_128 deep_1M     # download these two
-    python download.py all                  # everything: about 200 GB
+    inertia-download                      # list the datasets and what is there
+    inertia-download sift_128 deep_1M     # download these two
+    inertia-download all                  # everything: about 200 GB
 
 The datasets go to `--data-dir`, else to $INERTIA_CHALLENGE_DATA, else to
 ~/.cache/the-inertia-challenge. See `challenge.py` for the format of the files.
@@ -28,7 +28,7 @@ import urllib.request
 
 import numpy as np
 
-from challenge import (
+from .challenge import (
     DATASETS,
     SHA256,
     Dataset,

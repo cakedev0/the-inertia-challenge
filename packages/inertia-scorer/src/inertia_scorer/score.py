@@ -1,6 +1,6 @@
 """Score a submission: the inertia of its labels on a dataset.
 
-    python score.py deep_1M submission.npz
+    inertia-score deep_1M submission.npz
 
 A submission is a `.npz` file with one array per number of clusters: the key is
 the number of clusters `k` and the array is the label of each sample, of dtype
@@ -34,7 +34,7 @@ import zipfile
 import numpy as np
 import scipy.sparse as sp
 
-from challenge import SHA256, Reader, get_dataset
+from .challenge import SHA256, Reader, get_dataset
 
 DEFAULT_CHUNK_MB = 100
 DEFAULT_THREADS = 4
@@ -225,7 +225,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Inertia of the labels of a submission.",
     )
-    parser.add_argument("dataset", help="name of the dataset, see download.py")
+    parser.add_argument("dataset", help="name of the dataset, see inertia-download")
     parser.add_argument("submission", help=".npz file, {n_clusters: uint32 labels}")
     parser.add_argument(
         "--chunk-size",

@@ -4,8 +4,9 @@ A scoreboard for k-means: run your algorithm on your side, submit the labels,
 and this repository scores them. The score is the inertia of the labels: the
 sum of the squared distances of the samples to the mean of their cluster.
 
-For now the repository has the datasets and the scoring script. The scoreboard
-itself is not there yet.
+The repository has the datasets, the scoring, the service that scores the
+submissions and the page of the scoreboard. The server that takes the
+submissions is not there yet.
 
 ## Tasks
 
@@ -38,18 +39,23 @@ with the same loaders. The DEEP tasks are the ones of the user guide of
 ```bash
 git clone https://github.com/cakedev0/the-inertia-challenge
 cd the-inertia-challenge
-pip install -r requirements.txt
+pip install -e "packages/inertia-scorer[download]"
 ```
 
-`score.py` only needs NumPy and SciPy. `download.py` also needs h5py, pandas,
-pyarrow and scikit-learn.
+The repository has two packages, in `packages/`:
+
+- `inertia-scorer`: the datasets and the scoring, with the commands
+  `inertia-download`, `inertia-score` and `inertia-listener`. It only needs NumPy and SciPy. The
+  `download` extra adds what `inertia-download` needs: h5py, pandas, pyarrow
+  and scikit-learn.
+- `inertia-client`: the client of the online scoreboard. It is empty for now.
 
 ## Download the datasets
 
 ```bash
-python download.py                      # list the datasets and which ones are there
-python download.py sift_128 deep_1M     # download these two
-python download.py all                  # everything: about 200 GB
+inertia-download                      # list the datasets and which ones are there
+inertia-download sift_128 deep_1M     # download these two
+inertia-download all                  # everything: about 200 GB
 ```
 
 The datasets go to `--data-dir`, else to `$INERTIA_CHALLENGE_DATA`, else to
@@ -60,17 +66,17 @@ four others.
 
 All the values are float32. A dense dataset is one file of rows without a
 header (`<name>.f32`), so `np.memmap` and `np.fromfile` read it. A sparse one
-is a CSR matrix in three files. `challenge.Reader` reads both by ranges of
+is a CSR matrix in three files. `inertia_scorer.Reader` reads both by ranges of
 rows:
 
 ```python
-from challenge import Reader, get_dataset
+from inertia_scorer import Reader, get_dataset
 
 reader = Reader(get_dataset("sift_128"))
 X = reader.read(0, reader.shape[0])  # array, or scipy.sparse.csr_matrix
 ```
 
-`download.py` checks the sha256 of what it wrote against the reference copy,
+`inertia-download` checks the sha256 of what it wrote against the reference copy,
 and warns when they differ.
 
 ## Submission
@@ -83,7 +89,7 @@ A submission is a `.npz` file for one dataset. Each key is a number of clusters
 import numpy as np
 from sklearn.cluster import KMeans
 
-from challenge import Reader, get_dataset
+from inertia_scorer import Reader, get_dataset
 
 reader = Reader(get_dataset("sift_128"))
 X = reader.read(0, reader.shape[0])
@@ -97,7 +103,7 @@ np.savez("sift_128.npz", **submission)
 ## Score
 
 ```bash
-python score.py sift_128 sift_128.npz
+inertia-score sift_128 sift_128.npz
 ```
 
 ```
@@ -110,7 +116,7 @@ Scored in 0.7 s.
 
 Options: `--chunk-size` (in MB, 100 by default), `--threads` (4 by default),
 `--data-dir`, and `--json` for one JSON object per line. From Python:
-`score.score_submission("sift_128", "sift_128.npz")`.
+`inertia_scorer.score_submission("sift_128", "sift_128.npz")`.
 
 ### How the score is computed
 
@@ -134,3 +140,43 @@ computation (the means, then the distances).
 
 Memory: the labels, the sums (`8 * n_clusters * n_features` bytes) and about 5
 times the chunk size per thread.
+
+## Listener
+
+`inertia-listener` is the service behind the scoreboard. It takes the
+submissions of a queue, scores them, and publishes the results in a git
+repository:
+
+```bash
+inertia-listener path/to/results --queue-dir path/to/queue
+```
+
+A submission is from one user and for one dataset, with labels for some or all
+of its numbers of clusters. The user can add tags to it: free text as
+`{"time (s)": "23.21"}`, of at most 4 kB, published with the scores. For each of them, with `best` the lowest inertia published so far:
+
+- below `1.05 * best`, or no score yet: the score is published, in
+  `scores/<dataset>.jsonl`;
+- else nothing is published.
+
+The labels are not kept.
+
+The listener does not depend on what the queue is: `listener.listen` takes any
+object with the methods `get` and `done` of `listener.Queue`. The only queue
+for now is a directory, `listener.DirectoryQueue`. `path/to/results` is a
+clone that only the listener writes to.
+
+## Dashboard
+
+`docs/index.html` is the page of the scoreboard, for GitHub Pages. It reads
+`scores/<dataset>.jsonl` on the `results` branch of this repository, where the
+listener pushes, so it needs no build: a new score shows up when the page is
+loaded again. `docs/datasets.json` is the list of the datasets, written from
+`inertia_scorer.challenge.DATASETS` (a test checks that it is up to date).
+
+To try it with other scores, serve a directory that has the two files of
+`docs` and a `scores` directory, and open `index.html?scores=scores`:
+
+```bash
+python -m http.server --bind 127.0.0.1
+```

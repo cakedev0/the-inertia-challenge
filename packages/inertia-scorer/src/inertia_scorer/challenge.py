@@ -136,7 +136,7 @@ DATASETS = {
     ]
 }
 
-# sha256 of the files written by `download.py` (see `download.checksum`). A copy
+# sha256 of the files written by `inertia-download` (see `download.checksum`). A copy
 # with another checksum has other rows, or rows that differ by rounding: its
 # scores can't be compared to the ones of the reference copy.
 SHA256 = {
@@ -175,6 +175,14 @@ def get_dataset(name: str) -> Dataset:
     if name not in DATASETS:
         raise ValueError(f"Unknown dataset {name!r}. Datasets: {', '.join(DATASETS)}")
     return DATASETS[name]
+
+
+def datasets_json() -> str:
+    """The datasets as JSON, for the dashboard: the content of
+    `docs/datasets.json`. `tests/test_score.py` says how to write it again."""
+    keys = ("name", "n_samples", "n_features", "n_clusters", "description", "sparse")
+    datasets = [{key: getattr(d, key) for key in keys} for d in DATASETS.values()]
+    return json.dumps(datasets, indent=1) + "\n"
 
 
 def data_files(dataset: Dataset, directory: Path) -> list[Path]:
@@ -226,7 +234,7 @@ class Reader:
         if self.meta.get("n_samples", 0) < dataset.n_samples:
             raise DatasetNotFound(
                 f"{dataset.name} is not in {self.directory}. "
-                f"Run: python download.py {dataset.name}"
+                f"Run: inertia-download {dataset.name}"
             )
         self.shape = (dataset.n_samples, dataset.n_features)
         self.files = data_files(dataset, self.directory)

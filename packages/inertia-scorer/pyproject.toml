@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "inertia-scorer"
+version = "0.1.0"
+description = "Datasets and scoring of the inertia challenge, a scoreboard for k-means"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["numpy", "scipy"]
+
+[project.optional-dependencies]
+download = ["h5py", "pandas", "pyarrow", "scikit-learn"]
+test = ["pytest"]
+
+[project.scripts]
+inertia-score = "inertia_scorer.score:main"
+inertia-download = "inertia_scorer.download:main"
+inertia-listener = "inertia_scorer.listener:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/inertia_scorer"]

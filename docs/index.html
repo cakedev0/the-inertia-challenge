@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The inertia challenge</title>
+<style>
+  :root {
+    --surface: #ffffff;
+    --raised: #f5f6f8;
+    --ink: #1c2026;
+    --ink-2: #555e6b;
+    --line: #dfe3e8;
+    --accent: #1f5fbf;
+    --best: #e9f1fd;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface: #14171c;
+      --raised: #1e232a;
+      --ink: #e8ebef;
+      --ink-2: #a3acb8;
+      --line: #2f363f;
+      --accent: #8ab6f5;
+      --best: #1c2a40;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--surface);
+    color: var(--ink);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 1000px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 26px; margin: 0 0 8px; }
+  h2 { font-size: 17px; margin: 32px 0 4px; }
+  p { margin: 0 0 12px; max-width: 70ch; }
+  a { color: var(--accent); }
+  code { font: 13px ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  .muted { color: var(--ink-2); }
+  .controls {
+    display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center;
+    margin: 24px 0 8px; padding: 12px 0;
+    border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  }
+  label { color: var(--ink-2); }
+  select {
+    font: inherit; color: var(--ink); background: var(--raised);
+    border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px;
+  }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th {
+    text-align: left; font-weight: 600; font-size: 13px; color: var(--ink-2);
+    padding: 6px 12px 6px 0; border-bottom: 1px solid var(--line); white-space: nowrap;
+  }
+  td { padding: 6px 12px 6px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td.number, th.number { text-align: right; }
+  td.number, td.user, td.date { white-space: nowrap; }
+  td.user { max-width: 24ch; overflow: hidden; text-overflow: ellipsis; }
+  tr.best td { background: var(--best); }
+  td:first-child, th:first-child { padding-left: 8px; }
+  .tags { display: flex; flex-wrap: wrap; gap: 4px 6px; }
+  .tag {
+    background: var(--raised); border: 1px solid var(--line); border-radius: 4px;
+    padding: 0 6px; font-size: 13px; max-width: 320px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .tag b { font-weight: 600; color: var(--ink-2); }
+</style>
+</head>
+<body>
+<main>
+  <h1>The inertia challenge</h1>
+  <p>
+    A scoreboard for k-means. A submission is the label of each sample of a
+    dataset, and its score is the inertia of these labels: the sum of the
+    squared distances of the samples to the mean of their cluster. Lower is
+    better.
+  </p>
+  <p class="muted">
+    A score is listed when it is less than 5% above the best one at the time it
+    is submitted. The datasets and the scoring are in
+    <a href="https://github.com/cakedev0/the-inertia-challenge">the repository</a>.
+  </p>
+
+  <div class="controls">
+    <span>
+      <label for="dataset">Dataset</label>
+      <select id="dataset"></select>
+    </span>
+    <span>
+      <label for="view">Show</label>
+      <select id="view">
+        <option value="users">the best score of each user</option>
+        <option value="all">all the scores</option>
+      </select>
+    </span>
+  </div>
+  <p id="description" class="muted"></p>
+  <div id="tables"></div>
+</main>
+
+<script>
+"use strict";
+
+const REPOSITORY = "cakedev0/the-inertia-challenge";
+const BRANCH = "results";
+let scoresUrl = `https://raw.githubusercontent.com/${REPOSITORY}/${BRANCH}/scores`;
+// To try the page with other scores. Only on a local server, so that a link to
+// the public page always shows the real scores.
+const override = new URLSearchParams(location.search).get("scores");
+if (override && ["localhost", "127.0.0.1"].includes(location.hostname)) {
+  scoresUrl = override;
+}
+
+const datasetSelect = document.getElementById("dataset");
+const viewSelect = document.getElementById("view");
+const description = document.getElementById("description");
+const tables = document.getElementById("tables");
+let datasets = [];
+const scores = {};  // name of the dataset -> list of scores
+
+// The text of the page that comes from the scores (users, tags) is from anyone:
+// it only goes through textContent.
+function element(tag, text, className) {
+  const node = document.createElement(tag);
+  if (text !== undefined) node.textContent = text;
+  if (className) node.className = className;
+  return node;
+}
+
+async function loadScores(name) {
+  const response = await fetch(`${scoresUrl}/${name}.jsonl`, {cache: "no-cache"});
+  if (response.status === 404) return [];  // no score yet for this dataset
+  if (!response.ok) throw new Error(`${response.status} for the scores of ${name}`);
+  const lines = (await response.text()).split("\n").filter(line => line.trim());
+  return lines.map(line => JSON.parse(line));
+}
+
+function table(dataset, nClusters, rows) {
+  const section = element("section");
+  section.append(element("h2", `${nClusters.toLocaleString("en")} clusters`));
+  rows = rows.slice().sort((a, b) => a.inertia - b.inertia || a.time.localeCompare(b.time));
+  const count = rows.length;
+  if (viewSelect.value === "users") {
+    const seen = new Set();
+    rows = rows.filter(row => !seen.has(row.user) && seen.add(row.user));
+  }
+  if (!rows.length) {
+    section.append(element("p", "No score yet.", "muted"));
+    return section;
+  }
+  const users = new Set(rows.map(row => row.user)).size;
+  section.append(element(
+    "p",
+    `${count} score${count > 1 ? "s" : ""} from ${users} user${users > 1 ? "s" : ""}`,
+    "muted",
+  ));
+
+  const result = element("table");
+  const head = result.createTHead().insertRow();
+  const columns = [
+    ["#", "number"], ["User", ""], ["Inertia / n_samples", "number"],
+    ["Above the best", "number"], ["Tags", ""], ["Date", ""],
+  ];
+  for (const [title, className] of columns) {
+    const cell = element("th", title, className);
+    cell.scope = "col";
+    head.append(cell);
+  }
+  const body = result.createTBody();
+  const best = rows[0].inertia;
+  rows.forEach((row, index) => {
+    const line = body.insertRow();
+    if (index === 0) line.className = "best";
+    line.append(element("td", String(index + 1), "number"));
+    const user = element("td", row.user, "user");
+    user.title = row.user;
+    line.append(user);
+    const inertia = element("td", row.mean_inertia.toPrecision(8), "number");
+    inertia.title = `inertia: ${row.inertia}, non-empty clusters: ${row.n_nonempty}`;
+    line.append(inertia);
+    const gap = best > 0 ? 100 * (row.inertia / best - 1) : 0;
+    line.append(element("td", index === 0 ? "best" : `+${gap.toFixed(3)}%`, "number"));
+    const tags = element("div", undefined, "tags");
+    for (const [key, value] of Object.entries(row.tags || {})) {
+      const tag = element("span", undefined, "tag");
+      tag.title = `${key}: ${value}`;
+      tag.append(element("b", key), ` ${value}`);
+      tags.append(tag);
+    }
+    const tagsCell = element("td");
+    tagsCell.append(tags);
+    line.append(tagsCell);
+    const date = element("td", row.time.slice(0, 10), "date");
+    date.title = row.time;
+    line.append(date);
+  });
+  const scroll = element("div", undefined, "scroll");
+  scroll.append(result);
+  section.append(scroll);
+  return section;
+}
+
+function render() {
+  const dataset = datasets.find(dataset => dataset.name === datasetSelect.value);
+  description.textContent =
+    `${dataset.n_samples.toLocaleString("en")} samples, ` +
+    `${dataset.n_features.toLocaleString("en")} features` +
+    `${dataset.sparse ? ", sparse" : ""}. ${dataset.description}`;
+  tables.replaceChildren(...dataset.n_clusters.map(nClusters => table(
+    dataset,
+    nClusters,
+    scores[dataset.name].filter(row => row.n_clusters === nClusters),
+  )));
+  history.replaceState(null, "", `#${dataset.name}`);
+}
+
+async function main() {
+  try {
+    datasets = await (await fetch("datasets.json")).json();
+    const loaded = await Promise.all(datasets.map(dataset => loadScores(dataset.name)));
+    datasets.forEach((dataset, index) => { scores[dataset.name] = loaded[index]; });
+  } catch (error) {
+    tables.replaceChildren(element("p", `The scores could not be loaded: ${error.message}.`));
+    return;
+  }
+  for (const dataset of datasets) {
+    const count = scores[dataset.name].length;
+    const option = element("option", `${dataset.name} (${count} score${count === 1 ? "" : "s"})`);
+    option.value = dataset.name;
+    datasetSelect.append(option);
+  }
+  const wanted = decodeURIComponent(location.hash.slice(1));
+  const withScores = datasets.find(dataset => scores[dataset.name].length);
+  if (datasets.some(dataset => dataset.name === wanted)) datasetSelect.value = wanted;
+  else if (withScores) datasetSelect.value = withScores.name;
+  datasetSelect.addEventListener("change", render);
+  viewSelect.addEventListener("change", render);
+  render();
+}
+
+main();
+</script>
+</body>
+</html>
