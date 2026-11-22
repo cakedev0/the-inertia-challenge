@@ -161,7 +161,7 @@ of its numbers of clusters. The user can say how long the clustering took
 `{"algorithm": "Lloyd"}`, of at most 4 kB. All of it is published with the
 scores, as the user gave it: the listener can't check it. For each of them, with `best` the lowest inertia published so far:
 
-- below `1.05 * best`, or no score yet: the score is published, in
+- below `1.1 * best`, or no score yet: the score is published, in
   `scores/<dataset>.jsonl`;
 - else nothing is published.
 
@@ -180,6 +180,11 @@ clone that only the listener writes to.
 listener pushes, so it needs no build: a new score shows up when the page is
 loaded again. `docs/datasets.json` is the list of the datasets, written from
 `inertia_scorer.challenge.DATASETS` (a test checks that it is up to date).
+
+The first tab is the leader board. It ranks the users by the mean, over the
+tasks that have a score, of how far their best inertia is above the best one,
+in %. The weight of a task is `sqrt(n_samples * n_clusters)`, and a task
+without a score of the user counts as 10% above the best.
 
 To try it with other scores, serve a directory that has the two files of
 `docs` and a `scores` directory, and open `index.html?scores=scores`:
