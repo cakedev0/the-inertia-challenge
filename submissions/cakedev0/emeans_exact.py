@@ -3,8 +3,8 @@
 A case is a dataset and a number of clusters. For each case, EMeans is fitted
 with several seeds and numbers of epochs for as long as the total stays in the
 budget (100 s), and the labels of the lowest inertia are kept. A case is too
-slow when its first fit (`N_EPOCHS[0]` epochs, seed 0) takes more than the
-budget: it gets no labels.
+slow when its first fit (5 epochs, seed 0) takes more than the budget: it gets
+no labels. A case with `n_samples * n_clusters >= MAX_SIZE` is not tried.
 
     pip install -e packages/inertia-scorer -e packages/inertia-client \
         sklearn-contrib-emeans==0.4.1
@@ -25,9 +25,14 @@ import time
 from inertia_scorer import DATASETS, DatasetNotFound, Reader
 
 PARAMS = {"init": "k-means||", "revival": "greedy"}
-# The tries of a case, in this order: for each seed, each number of epochs.
-N_EPOCHS = (5, 10, 20, 40)
-SEEDS = range(5)
+# The tries of a case, as (n_epochs, seed), in this order: 5 and 10 epochs for
+# each seed, then 20 epochs for each seed.
+SEEDS = range(10)
+TRIES = [(n_epochs, seed) for seed in SEEDS for n_epochs in (5, 10)]
+TRIES += [(20, seed) for seed in SEEDS]
+# Cases of at least this many samples * clusters are not tried: they are far
+# from fitting in 100 s.
+MAX_SIZE = 1e12
 # A try runs when `MARGIN` times its expected time fits in what is left.
 MARGIN = 1.2
 
@@ -38,39 +43,38 @@ def fit_case(X, n_clusters, budget):
     from sklearn_emeans import EMeans
 
     tries, labels, spent = [], None, 0.0
-    for seed in SEEDS:
-        for n_epochs in N_EPOCHS:
-            if tries:
-                # Above the real time for a first try with this many epochs: the
-                # initialization does not get longer with the epochs.
-                same = [t["time_s"] for t in tries if t["n_epochs"] == n_epochs]
-                expected = tries[0]["time_s"] * n_epochs / N_EPOCHS[0]
-                if spent + MARGIN * (same[-1] if same else expected) > budget:
-                    continue
-            start = time.perf_counter()
-            model = EMeans(
-                n_clusters=n_clusters, n_epochs=n_epochs, random_state=seed, **PARAMS
-            ).fit(X)
-            elapsed = time.perf_counter() - start
-            spent += elapsed
-            inertia = float(model.inertia_)
-            print(
-                f"  {n_clusters} clusters, {n_epochs} epochs, seed {seed}: "
-                f"{elapsed:.2f} s, inertia {inertia:.6e}",
-                flush=True,
-            )
-            if labels is None or inertia < min(t["inertia"] for t in tries):
-                labels = model.labels_
-            tries.append(
-                {
-                    "n_epochs": n_epochs,
-                    "seed": seed,
-                    "time_s": elapsed,
-                    "inertia": inertia,
-                }
-            )
-            if spent > budget and len(tries) == 1:
-                return tries, None
+    for n_epochs, seed in TRIES:
+        if tries:
+            # Above the real time for a first try with this many epochs: the
+            # initialization does not get longer with the epochs.
+            same = [t["time_s"] for t in tries if t["n_epochs"] == n_epochs]
+            expected = tries[0]["time_s"] * n_epochs / TRIES[0][0]
+            if spent + MARGIN * (same[-1] if same else expected) > budget:
+                continue
+        start = time.perf_counter()
+        model = EMeans(
+            n_clusters=n_clusters, n_epochs=n_epochs, random_state=seed, **PARAMS
+        ).fit(X)
+        elapsed = time.perf_counter() - start
+        spent += elapsed
+        inertia = float(model.inertia_)
+        print(
+            f"  {n_clusters} clusters, {n_epochs} epochs, seed {seed}: "
+            f"{elapsed:.2f} s, inertia {inertia:.6e}",
+            flush=True,
+        )
+        if labels is None or inertia < min(t["inertia"] for t in tries):
+            labels = model.labels_
+        tries.append(
+            {
+                "n_epochs": n_epochs,
+                "seed": seed,
+                "time_s": elapsed,
+                "inertia": inertia,
+            }
+        )
+        if spent > budget and len(tries) == 1:
+            return tries, None
     return tries, labels
 
 
@@ -117,7 +121,7 @@ def fit(args):
         labels, X = {}, None
         for n_clusters in dataset.n_clusters:
             cost = n_values * n_clusters
-            if any(cost >= other for other in slow):
+            if n_samples * n_clusters >= MAX_SIZE or any(c <= cost for c in slow):
                 print(f"{name}, {n_clusters} clusters: skipped, too slow")
                 result["too_slow"][n_clusters] = cost
                 continue
