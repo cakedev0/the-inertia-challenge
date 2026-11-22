@@ -10,6 +10,7 @@ A case that is too slow gets no labels. It is one of:
 - The probe, a fit of half an epoch with `PROBE`, takes more than a tenth of
   the budget (10 s).
 - The first fit (5 epochs, seed 0) ends after the budget.
+- A smaller number of clusters of the dataset was too slow.
 
     pip install -e packages/inertia-scorer -e packages/inertia-client \
         sklearn-contrib-emeans==0.4.1
@@ -101,14 +102,6 @@ def fit(args):
     from inertia_client import save_labels
 
     args.out.mkdir(parents=True, exist_ok=True)
-    # Costs (stored values of the data * number of clusters) of the cases that
-    # were too slow, for the dense and for the sparse datasets: a case that
-    # costs as much as one of them is not tried.
-    too_slow = {False: [], True: []}
-    for path in args.out.glob("*.json"):
-        result = json.loads(path.read_text())
-        too_slow[DATASETS[result["dataset"]].sparse] += result["too_slow"].values()
-
     names = args.datasets or sorted(
         DATASETS, key=lambda name: DATASETS[name].n_samples * DATASETS[name].n_features
     )
@@ -124,7 +117,6 @@ def fit(args):
             continue
         n_samples, n_features = reader.shape
         n_values = int(reader.indptr[-1]) if dataset.sparse else n_samples * n_features
-        slow = too_slow[dataset.sparse]
         result = {
             "dataset": name,
             "hardware": args.hardware,
@@ -139,7 +131,7 @@ def fit(args):
         labels, X = {}, None
         for n_clusters in dataset.n_clusters:
             cost = n_values * n_clusters
-            if cost >= MAX_COST or any(c <= cost for c in slow):
+            if cost >= MAX_COST or result["too_slow"]:
                 print(f"{name}, {n_clusters} clusters: skipped, too slow")
                 result["too_slow"][n_clusters] = cost
                 continue
@@ -151,7 +143,6 @@ def fit(args):
             if best is None:
                 print(f"{name}, {n_clusters} clusters: too slow")
                 result["too_slow"][n_clusters] = cost
-                slow.append(cost)
                 continue
             labels[n_clusters] = best
             result["cases"][n_clusters] = tries
