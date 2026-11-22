@@ -110,10 +110,11 @@ inertia-score sift_128 sift_128.npz
 
 ```
 dataset   n_clusters  non-empty  inertia          inertia / n_samples
-sift_128  64          64         6.622908544e+10  6.622908544e+04
-sift_128  256         256        5.773387353e+10  5.773387353e+04
-sift_128  1024        1024       5.076856687e+10  5.076856687e+04
-Scored in 0.7 s.
+sift_128  10          10         8.149170491e+10  8.149170491e+04
+sift_128  100         100        6.319282816e+10  6.319282816e+04
+sift_128  1000        1000       5.089552628e+10  5.089552628e+04
+sift_128  10000       10000      4.061009915e+10  4.061009915e+04
+Scored in 1.0 s.
 ```
 
 Options: `--chunk-size` (in MB, 100 by default), `--threads` (4 by default),
