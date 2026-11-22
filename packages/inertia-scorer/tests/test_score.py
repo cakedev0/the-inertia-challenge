@@ -174,3 +174,15 @@ def test_datasets_of_the_dashboard():
         "print(j(), end='')\" > docs/datasets.json"
     )
     assert path.read_text() == challenge.datasets_json(), f"Run: {command}"
+
+
+def test_n_clusters_for():
+    # Clusters of 100, 1,000, 10,000 and 100,000 samples on average, as long
+    # as there are at least 5 of them.
+    assert challenge.n_clusters_for(1_000_000) == (10, 100, 1000, 10_000)
+    assert challenge.n_clusters_for(515_345) == (5, 52, 515, 5153)
+    assert challenge.n_clusters_for(18_846) == (19, 188)
+    assert challenge.n_clusters_for(449_999) == (45, 450, 4500)
+    assert challenge.n_clusters_for(449) == ()
+    for dataset in challenge.DATASETS.values():
+        assert dataset.n_clusters == challenge.n_clusters_for(dataset.n_samples)

@@ -1,12 +1,14 @@
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import subprocess
+import threading
 
 import numpy as np
 import pytest
 
 from inertia_scorer import challenge, download, listener
 from inertia_scorer.challenge import Dataset
-from inertia_scorer.listener import DirectoryQueue, Results
+from inertia_scorer.listener import DirectoryQueue, HttpQueue, Results
 
 N_SAMPLES = 600
 
@@ -224,3 +226,67 @@ def test_results_needs_a_clean_clone(setup, tmp_path):
         Results(results.directory)
     with pytest.raises(RuntimeError, match="not the root"):
         Results(tmp_path / "data", remote=False)
+
+
+@pytest.fixture
+def server():
+    """A server with the API of `HttpQueue`. `server.submissions` are the queued
+    ones, as (ticket, content of the .npz file), and `server.results` the results
+    it got."""
+
+    class Handler(BaseHTTPRequestHandler):
+        def answer(self, status, body=b""):
+            self.send_response(status)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            if self.headers["Authorization"] != "Bearer secret":
+                return self.answer(403, b'{"error": "not the listener"}')
+            if not server.submissions:
+                return self.answer(204)
+            ticket, labels = server.submissions[0]
+            if self.path == "/queue/next":
+                return self.answer(200, json.dumps(ticket).encode())
+            assert self.path == f"/queue/{ticket['id']}/labels"
+            self.answer(200, labels)
+
+        def do_POST(self):
+            ticket, _ = server.submissions.pop(0)
+            assert self.path == f"/queue/{ticket['id']}/result"
+            length = int(self.headers["Content-Length"])
+            server.results.append(json.loads(self.rfile.read(length)))
+            self.answer(200, b"{}")
+
+        def log_message(self, *arguments):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server.submissions, server.results = [], []
+    server.url = f"http://127.0.0.1:{server.server_port}/"
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield server
+    server.shutdown()
+
+
+def test_http_queue(setup, server, tmp_path):
+    X, blobs, queue, results, remote = setup
+    np.savez(tmp_path / "labels.npz", **{"4": blobs})
+    ticket = {"id": "0b1e-first", "dataset": "toy", "user": "ada", "time_s": 23.21}
+    server.submissions.append((ticket, (tmp_path / "labels.npz").read_bytes()))
+    invalid = {"id": "second", "dataset": "toy", "user": "ada", "hardware": "M2"}
+    server.submissions.append((invalid, b"not a zip file"))
+    queue = HttpQueue(server.url, "secret", tmp_path / "downloads")
+
+    listener.listen(queue, results, once=True)
+
+    assert [result["status"] for result in server.results] == ["scored", "rejected"]
+    assert server.results[0]["id"] == "0b1e-first"
+    assert server.results[0]["scores"][0]["outcome"] == "best"
+    (line,) = results.scores(challenge.DATASETS["toy"])
+    assert (line["user"], line["time_s"], line["hardware"]) == ("ada", 23.21, None)
+    assert not list((tmp_path / "downloads").iterdir())
+
+    with pytest.raises(RuntimeError, match="answered 403 to /queue/next"):
+        HttpQueue(server.url, "wrong").get()

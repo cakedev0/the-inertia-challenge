@@ -37,99 +37,100 @@ class Dataset:
             object.__setattr__(self, "stem", self.name)
 
 
-_PARETO_N_CLUSTERS = (64, 256, 1024)
+# The tasks of a dataset are average cluster sizes, not numbers of clusters.
+CLUSTER_SIZES = (100, 1_000, 10_000, 100_000)
+MIN_N_CLUSTERS = 5
+
+
+def n_clusters_for(n_samples: int) -> tuple[int, ...]:
+    """The numbers of clusters of a dataset of `n_samples`, in increasing order:
+    `n_samples / size`, rounded, for each size of `CLUSTER_SIZES` that gives at
+    least `MIN_N_CLUSTERS` clusters."""
+    counts = ((2 * n_samples + size) // (2 * size) for size in CLUSTER_SIZES)
+    return tuple(sorted(count for count in counts if count >= MIN_N_CLUSTERS))
+
+
+def _dataset(name, n_samples, n_features, description, **kwargs) -> Dataset:
+    n_clusters = n_clusters_for(n_samples)
+    return Dataset(name, n_samples, n_features, n_clusters, description, **kwargs)
+
 
 DATASETS = {
     dataset.name: dataset
     for dataset in [
-        Dataset(
+        _dataset(
             "sift_128",
             1_000_000,
             128,
-            _PARETO_N_CLUSTERS,
             "SIFT descriptors (train set of ann-benchmarks' sift-128-euclidean)",
         ),
-        Dataset(
+        _dataset(
             "glove_200",
             1_183_514,
             200,
-            _PARETO_N_CLUSTERS,
             "GloVe word vectors, not normalized (train set of ann-benchmarks' "
             "glove-200-angular)",
         ),
-        Dataset(
+        _dataset(
             "clip_512",
             1_000_000,
             512,
-            _PARETO_N_CLUSTERS,
             "CLIP ViT-B/32 image embeddings (Qdrant/wolt-food-clip-ViT-B-32-"
             "embeddings), L2-normalized, ~23% of exact duplicates",
         ),
-        Dataset(
+        _dataset(
             "susy",
             5_000_000,
             18,
-            _PARETO_N_CLUSTERS,
             "SUSY (UCI), simulated particle collisions, raw features",
         ),
-        Dataset(
+        _dataset(
             "year_prediction_msd_standardized",
             515_345,
             90,
-            _PARETO_N_CLUSTERS,
             "YearPredictionMSD (UCI), audio features, standardized",
         ),
-        Dataset(
+        _dataset(
             "road_network_km_x10",
             4_348_740,
             3,
-            _PARETO_N_CLUSTERS,
             "3D Road Network (UCI) in kilometers, each point with 9 copies "
             "jittered by 5 m",
         ),
-        Dataset(
+        _dataset(
             "20newsgroups",
             18_846,
             130_107,
-            _PARETO_N_CLUSTERS,
             "20 Newsgroups, L2-normalized token counts",
             sparse=True,
         ),
-        Dataset(
+        _dataset(
             "rcv1",
             804_414,
             47_236,
-            _PARETO_N_CLUSTERS,
             "RCV1-v2 news stories, cosine-normalized log TF-IDF",
             sparse=True,
         ),
-        Dataset(
-            "deep_1M", 1_000_000, 96, (10_000,), "first 1M rows of DEEP1B", stem="deep"
-        ),
-        Dataset(
-            "deep_5M", 5_000_000, 96, (50_000,), "first 5M rows of DEEP1B", stem="deep"
-        ),
-        Dataset(
+        _dataset("deep_1M", 1_000_000, 96, "first 1M rows of DEEP1B", stem="deep"),
+        _dataset("deep_5M", 5_000_000, 96, "first 5M rows of DEEP1B", stem="deep"),
+        _dataset(
             "deep_20M",
             20_000_000,
             96,
-            (20_000,),
             "first 20M rows of DEEP1B",
             stem="deep",
         ),
-        Dataset(
+        _dataset(
             "deep_100M",
             100_000_000,
             96,
-            (10_000, 1_000_000),
             "first 100M rows of DEEP1B",
             stem="deep",
         ),
-        Dataset(
+        _dataset(
             "deep_500M",
             500_000_000,
             96,
-            (500_000, 5_000_000),
             "first 500M rows of DEEP1B",
             stem="deep",
         ),

@@ -4,9 +4,10 @@
   "n_samples": 1000000,
   "n_features": 128,
   "n_clusters": [
-   64,
-   256,
-   1024
+   10,
+   100,
+   1000,
+   10000
   ],
   "description": "SIFT descriptors (train set of ann-benchmarks' sift-128-euclidean)",
   "sparse": false
@@ -16,9 +17,10 @@
   "n_samples": 1183514,
   "n_features": 200,
   "n_clusters": [
-   64,
-   256,
-   1024
+   12,
+   118,
+   1184,
+   11835
   ],
   "description": "GloVe word vectors, not normalized (train set of ann-benchmarks' glove-200-angular)",
   "sparse": false
@@ -28,9 +30,10 @@
   "n_samples": 1000000,
   "n_features": 512,
   "n_clusters": [
-   64,
-   256,
-   1024
+   10,
+   100,
+   1000,
+   10000
   ],
   "description": "CLIP ViT-B/32 image embeddings (Qdrant/wolt-food-clip-ViT-B-32-embeddings), L2-normalized, ~23% of exact duplicates",
   "sparse": false
@@ -40,9 +43,10 @@
   "n_samples": 5000000,
   "n_features": 18,
   "n_clusters": [
-   64,
-   256,
-   1024
+   50,
+   500,
+   5000,
+   50000
   ],
   "description": "SUSY (UCI), simulated particle collisions, raw features",
   "sparse": false
@@ -52,9 +56,10 @@
   "n_samples": 515345,
   "n_features": 90,
   "n_clusters": [
-   64,
-   256,
-   1024
+   5,
+   52,
+   515,
+   5153
   ],
   "description": "YearPredictionMSD (UCI), audio features, standardized",
   "sparse": false
@@ -64,9 +69,10 @@
   "n_samples": 4348740,
   "n_features": 3,
   "n_clusters": [
-   64,
-   256,
-   1024
+   43,
+   435,
+   4349,
+   43487
   ],
   "description": "3D Road Network (UCI) in kilometers, each point with 9 copies jittered by 5 m",
   "sparse": false
@@ -76,9 +82,8 @@
   "n_samples": 18846,
   "n_features": 130107,
   "n_clusters": [
-   64,
-   256,
-   1024
+   19,
+   188
   ],
   "description": "20 Newsgroups, L2-normalized token counts",
   "sparse": true
@@ -88,9 +93,10 @@
   "n_samples": 804414,
   "n_features": 47236,
   "n_clusters": [
-   64,
-   256,
-   1024
+   8,
+   80,
+   804,
+   8044
   ],
   "description": "RCV1-v2 news stories, cosine-normalized log TF-IDF",
   "sparse": true
@@ -100,6 +106,9 @@
   "n_samples": 1000000,
   "n_features": 96,
   "n_clusters": [
+   10,
+   100,
+   1000,
    10000
   ],
   "description": "first 1M rows of DEEP1B",
@@ -110,6 +119,9 @@
   "n_samples": 5000000,
   "n_features": 96,
   "n_clusters": [
+   50,
+   500,
+   5000,
    50000
   ],
   "description": "first 5M rows of DEEP1B",
@@ -120,7 +132,10 @@
   "n_samples": 20000000,
   "n_features": 96,
   "n_clusters": [
-   20000
+   200,
+   2000,
+   20000,
+   200000
   ],
   "description": "first 20M rows of DEEP1B",
   "sparse": false
@@ -130,7 +145,9 @@
   "n_samples": 100000000,
   "n_features": 96,
   "n_clusters": [
+   1000,
    10000,
+   100000,
    1000000
   ],
   "description": "first 100M rows of DEEP1B",
@@ -141,6 +158,8 @@
   "n_samples": 500000000,
   "n_features": 96,
   "n_clusters": [
+   5000,
+   50000,
    500000,
    5000000
   ],

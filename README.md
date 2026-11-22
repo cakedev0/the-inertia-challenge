@@ -10,28 +10,29 @@ submissions is not there yet.
 
 ## Tasks
 
-A task is a dataset and a number of clusters.
+A task is a dataset and a number of clusters. The numbers of clusters of a
+dataset are the ones that give clusters of 100, 1,000, 10,000 and 100,000
+samples on average: `n_samples / size`, rounded, when it is at least 5.
 
 | dataset | n_samples | n_features | n_clusters | |
 | --- | --- | --- | --- | --- |
-| `sift_128` | 1,000,000 | 128 | 64, 256, 1,024 | SIFT descriptors (train set of ann-benchmarks' `sift-128-euclidean`) |
-| `glove_200` | 1,183,514 | 200 | 64, 256, 1,024 | GloVe word vectors, not normalized (train set of ann-benchmarks' `glove-200-angular`) |
-| `clip_512` | 1,000,000 | 512 | 64, 256, 1,024 | CLIP ViT-B/32 image embeddings ([Qdrant/wolt-food-clip-ViT-B-32-embeddings](https://huggingface.co/datasets/Qdrant/wolt-food-clip-ViT-B-32-embeddings)), L2-normalized, ~23% of exact duplicates |
-| `susy` | 5,000,000 | 18 | 64, 256, 1,024 | [SUSY](https://archive.ics.uci.edu/dataset/279/susy) (UCI), raw features |
-| `year_prediction_msd_standardized` | 515,345 | 90 | 64, 256, 1,024 | [YearPredictionMSD](https://archive.ics.uci.edu/dataset/203/yearpredictionmsd) (UCI), standardized |
-| `road_network_km_x10` | 4,348,740 | 3 | 64, 256, 1,024 | [3D Road Network](https://archive.ics.uci.edu/dataset/246/3d+road+network+north+jutland+denmark) (UCI) in kilometers, each point with 9 copies jittered by 5 m |
-| `20newsgroups` | 18,846 | 130,107 | 64, 256, 1,024 | sparse, L2-normalized token counts (`fetch_20newsgroups_vectorized`) |
-| `rcv1` | 804,414 | 47,236 | 64, 256, 1,024 | sparse, cosine-normalized log TF-IDF (`fetch_rcv1`) |
-| `deep_1M` | 1,000,000 | 96 | 10,000 | first rows of [DEEP1B](https://research.yandex.com/blog/benchmarks-for-billion-scale-similarity-search) |
-| `deep_5M` | 5,000,000 | 96 | 50,000 | |
-| `deep_20M` | 20,000,000 | 96 | 20,000 | |
-| `deep_100M` | 100,000,000 | 96 | 10,000 and 1,000,000 | |
-| `deep_500M` | 500,000,000 | 96 | 500,000 and 5,000,000 | |
+| `sift_128` | 1,000,000 | 128 | 10, 100, 1,000, 10,000 | SIFT descriptors (train set of ann-benchmarks' `sift-128-euclidean`) |
+| `glove_200` | 1,183,514 | 200 | 12, 118, 1,184, 11,835 | GloVe word vectors, not normalized (train set of ann-benchmarks' `glove-200-angular`) |
+| `clip_512` | 1,000,000 | 512 | 10, 100, 1,000, 10,000 | CLIP ViT-B/32 image embeddings ([Qdrant/wolt-food-clip-ViT-B-32-embeddings](https://huggingface.co/datasets/Qdrant/wolt-food-clip-ViT-B-32-embeddings)), L2-normalized, ~23% of exact duplicates |
+| `susy` | 5,000,000 | 18 | 50, 500, 5,000, 50,000 | [SUSY](https://archive.ics.uci.edu/dataset/279/susy) (UCI), raw features |
+| `year_prediction_msd_standardized` | 515,345 | 90 | 5, 52, 515, 5,153 | [YearPredictionMSD](https://archive.ics.uci.edu/dataset/203/yearpredictionmsd) (UCI), standardized |
+| `road_network_km_x10` | 4,348,740 | 3 | 43, 435, 4,349, 43,487 | [3D Road Network](https://archive.ics.uci.edu/dataset/246/3d+road+network+north+jutland+denmark) (UCI) in kilometers, each point with 9 copies jittered by 5 m |
+| `20newsgroups` | 18,846 | 130,107 | 19, 188 | sparse, L2-normalized token counts (`fetch_20newsgroups_vectorized`) |
+| `rcv1` | 804,414 | 47,236 | 8, 80, 804, 8,044 | sparse, cosine-normalized log TF-IDF (`fetch_rcv1`) |
+| `deep_1M` | 1,000,000 | 96 | 10, 100, 1,000, 10,000 | first rows of [DEEP1B](https://research.yandex.com/blog/benchmarks-for-billion-scale-similarity-search) |
+| `deep_5M` | 5,000,000 | 96 | 50, 500, 5,000, 50,000 | |
+| `deep_20M` | 20,000,000 | 96 | 200, 2,000, 20,000, 200,000 | |
+| `deep_100M` | 100,000,000 | 96 | 1,000, 10,000, 100,000, 1,000,000 | |
+| `deep_500M` | 500,000,000 | 96 | 5,000, 50,000, 500,000, 5,000,000 | |
 
-The first eight datasets and their numbers of clusters are the ones of the
-k-means benchmark of
+The first eight datasets are the ones of the k-means benchmark of
 [scikit-learn-benchmarks#187](https://github.com/probabl-ai/scikit-learn-benchmarks/pull/187),
-with the same loaders. The DEEP tasks are the ones of the user guide of
+with the same loaders. The DEEP datasets are the ones of the user guide of
 [sklearn-contrib-emeans](https://github.com/cakedev0/sklearn-contrib-emeans).
 
 ## Install
@@ -91,10 +92,11 @@ from sklearn.cluster import KMeans
 
 from inertia_scorer import Reader, get_dataset
 
-reader = Reader(get_dataset("sift_128"))
+dataset = get_dataset("sift_128")
+reader = Reader(dataset)
 X = reader.read(0, reader.shape[0])
 submission = {}
-for k in (64, 256, 1024):
+for k in dataset.n_clusters:  # 10, 100, 1000, 10000
     labels = KMeans(n_clusters=k, n_init=1, max_iter=10).fit(X).labels_
     submission[str(k)] = labels.astype(np.uint32)
 np.savez("sift_128.npz", **submission)
@@ -148,7 +150,8 @@ submissions of a queue, scores them, and publishes the results in a git
 repository:
 
 ```bash
-inertia-listener path/to/results --queue-dir path/to/queue
+export INERTIA_QUEUE_TOKEN=...
+inertia-listener path/to/results --queue-url https://the-server
 ```
 
 A submission is from one user and for one dataset, with labels for some or all
@@ -164,8 +167,9 @@ scores, as the user gave it: the listener can't check it. For each of them, with
 The labels are not kept.
 
 The listener does not depend on what the queue is: `listener.listen` takes any
-object with the methods `get` and `done` of `listener.Queue`. The only queue
-for now is a directory, `listener.DirectoryQueue`. `path/to/results` is a
+object with the methods `get` and `done` of `listener.Queue`. There are two:
+`listener.HttpQueue` asks the server of the scoreboard over HTTPS
+(`--queue-url`), and `listener.DirectoryQueue` is a directory (`--queue-dir`). `path/to/results` is a
 clone that only the listener writes to.
 
 ## Dashboard

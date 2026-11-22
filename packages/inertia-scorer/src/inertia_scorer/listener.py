@@ -1,5 +1,6 @@
 """Score the submissions of a queue and publish the results in a git repository.
 
+    inertia-listener RESULTS --queue-url https://...
     inertia-listener RESULTS --queue-dir QUEUE
 
 The listener does not depend on what the queue is: it takes any object with the
@@ -9,8 +10,8 @@ some or all the numbers of clusters of the dataset. The user can say how long
 the clustering took (`time_s`, in seconds) and on what hardware, and add tags:
 free text about the submission, as `{"algorithm": "Lloyd"}`, of at most 4 kB.
 The listener publishes what the user says and can't check it.
-`DirectoryQueue` is a queue in a directory, for tests and for a server on the
-same machine.
+`HttpQueue` is the queue of the server of the scoreboard, and `DirectoryQueue`
+a queue in a directory, for tests and for a server on the same machine.
 
 The results are a clone of a git repository that only the listener writes to:
 `scores/<dataset>.jsonl` has one line per published score, with its user, time,
@@ -37,10 +38,14 @@ import math
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Protocol
+import urllib.error
+import urllib.request
 import zipfile
 
 import numpy as np
@@ -50,6 +55,7 @@ from .score import DEFAULT_CHUNK_MB, DEFAULT_THREADS, checksum_warning, score_la
 
 # A score is published when its inertia is below (1 + RECORD_MARGIN) * best.
 RECORD_MARGIN = 0.05
+TOKEN_VARIABLE = "INERTIA_QUEUE_TOKEN"
 MAX_USER_LENGTH = 64
 MAX_HARDWARE_LENGTH = 200
 # Of the tags of a submission, as JSON in UTF-8.
@@ -132,6 +138,74 @@ class DirectoryQueue:
         tmp.write_text(json.dumps(result, indent=1) + "\n")
         os.replace(tmp, path)
         (self.pending_dir / f"{submission.id}.json").unlink(missing_ok=True)
+        submission.labels.unlink(missing_ok=True)
+
+
+class HttpQueue:
+    """The queue of the server of the scoreboard.
+
+    The listener asks the server, so its machine needs no open port:
+
+    - `GET <url>/queue/next` is the next submission, as JSON (id, dataset, user,
+      time_s, hardware, tags), or 204 if there is none. The server returns it
+      again until its result is sent;
+    - `GET <url>/queue/<id>/labels` is its `.npz` file;
+    - `POST <url>/queue/<id>/result` takes the result, as JSON.
+
+    All with `Authorization: Bearer <token>`, the token of the listener.
+    """
+
+    def __init__(self, url: str, token: str, directory=None, timeout: float = 60.0):
+        self.url = url.rstrip("/")
+        self.token = token
+        self.timeout = timeout
+        # Where the `.npz` files are while they are scored.
+        self.directory = Path(directory or tempfile.mkdtemp(prefix="inertia-queue-"))
+        self.directory.mkdir(parents=True, exist_ok=True)
+
+    def _open(self, path: str, data: bytes | None = None):
+        request = urllib.request.Request(
+            f"{self.url}{path}",
+            data=data,
+            headers={
+                "Authorization": f"Bearer {self.token}",
+                "Content-Type": "application/json",
+                "User-Agent": "inertia-listener",
+            },
+        )
+        try:
+            return urllib.request.urlopen(request, timeout=self.timeout)
+        except urllib.error.HTTPError as error:
+            detail = error.read(1000).decode(errors="replace")
+            raise RuntimeError(
+                f"The queue answered {error.code} to {path}: {detail}"
+            ) from None
+
+    def get(self) -> Submission | None:
+        with self._open("/queue/next") as response:
+            if response.status == 204:
+                return None
+            ticket = json.load(response)
+        if not ID_PATTERN.fullmatch(str(ticket["id"])):
+            raise RuntimeError(f"The queue gave an invalid id: {ticket['id']!r}.")
+        labels = self.directory / f"{ticket['id']}.npz"
+        with self._open(f"/queue/{ticket['id']}/labels") as response:
+            with open(labels, "wb") as file:
+                shutil.copyfileobj(response, file, 1 << 20)
+        return Submission(
+            ticket["id"],
+            ticket["dataset"],
+            labels,
+            ticket["user"],
+            ticket.get("time_s"),
+            ticket.get("hardware"),
+            ticket.get("tags", {}),
+        )
+
+    def done(self, submission: Submission, result: dict) -> None:
+        data = json.dumps(result).encode()
+        with self._open(f"/queue/{submission.id}/result", data) as response:
+            response.read()
         submission.labels.unlink(missing_ok=True)
 
 
@@ -396,10 +470,14 @@ def main(argv=None):
         "git repository.",
     )
     parser.add_argument("results", help="clone of the git repository of the results")
-    parser.add_argument(
-        "--queue-dir",
-        required=True,
-        help="directory of the queue, see DirectoryQueue (the only queue for now)",
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument(
+        "--queue-url",
+        help="URL of the server of the scoreboard, see HttpQueue. The token of "
+        f"the listener is in ${TOKEN_VARIABLE}",
+    )
+    source.add_argument(
+        "--queue-dir", help="directory of the queue, see DirectoryQueue"
     )
     parser.add_argument(
         "--no-remote", action="store_true", help="commit, but do not pull or push"
@@ -434,9 +512,17 @@ def main(argv=None):
     )
     args = parser.parse_args(argv)
 
+    if args.queue_dir:
+        queue = DirectoryQueue(args.queue_dir)
+    else:
+        token = os.environ.get(TOKEN_VARIABLE)
+        if not token:
+            sys.exit(f"Error: set ${TOKEN_VARIABLE} to the token of the listener.")
+        queue = HttpQueue(args.queue_url, token)
+
     try:
         listen(
-            DirectoryQueue(args.queue_dir),
+            queue,
             Results(args.results, remote=not args.no_remote),
             poll=args.poll,
             once=args.once,
