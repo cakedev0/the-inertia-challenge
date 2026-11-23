@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "inertia-client"
-version = "0.1.0"
+version = "0.2.0"
 description = "Submit labels to the inertia challenge, a scoreboard for k-means"
 readme = "README.md"
 license = "BSD-3-Clause"
@@ -17,7 +17,7 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Topic :: Scientific/Engineering",
 ]
-dependencies = ["inertia-scorer>=0.1.0", "numpy"]
+dependencies = ["inertia-scorer>=0.2.0", "numpy"]
 
 [project.urls]
 Homepage = "https://github.com/cakedev0/the-inertia-challenge"
