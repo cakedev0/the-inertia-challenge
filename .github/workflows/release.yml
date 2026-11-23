@@ -43,11 +43,11 @@ jobs:
 
   publish-scorer:
     # Needs a trusted publisher on PyPI for inertia-scorer, this repository, the
-    # workflow release.yml and the "pypi" environment.
+    # workflow release.yml and the "pypi-scorer" environment.
     if: github.event_name == 'release'
     needs: [wheels, sdists]
     runs-on: ubuntu-latest
-    environment: pypi
+    environment: pypi-scorer
     permissions:
       id-token: write
     steps:
@@ -65,11 +65,13 @@ jobs:
 
   publish-client:
     # inertia-client depends on inertia-scorer: it goes second. It needs its own
-    # trusted publisher on PyPI, for the same workflow and environment.
+    # trusted publisher on PyPI, for the same workflow and the "pypi-client"
+    # environment (PyPI does not take the same configuration for two new
+    # projects).
     if: github.event_name == 'release'
     needs: publish-scorer
     runs-on: ubuntu-latest
-    environment: pypi
+    environment: pypi-client
     permissions:
       id-token: write
     steps:
