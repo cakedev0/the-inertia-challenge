@@ -30,14 +30,17 @@ X = load_dataset("year_prediction_msd_standardized")  # float32, (515345, 90)
 
 labels = KMeans(5, init="random", n_init=1).fit_predict(X)
 
-inertia_client.submit("year_prediction_msd_standardized", {5: labels})
+inertia_client.submit(
+    "year_prediction_msd_standardized", {5: labels}, submit_only_improvement=True
+)
 ```
 
-The server takes one submission per day and per dataset. To only send the
-numbers of clusters that beat your best score on the scoreboard (the labels are
-scored on your side, so the dataset must be downloaded), add
-`submit_only_improvement=True`, or `--submit-only-improvement` on the command
-line.
+The server takes one submission per day and per dataset. With
+`submit_only_improvement=True` (`--submit-only-improvement` on the command
+line), the labels are scored on your side first, and a number of clusters is
+only sent if it beats your best score and if it is less than 10% above the best
+score of everyone: the scoreboard does not publish the others. It prints what
+it sends, and why.
 
 ## Tasks
 

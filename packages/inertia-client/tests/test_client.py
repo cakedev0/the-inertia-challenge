@@ -337,13 +337,13 @@ def test_submit_only_improvement(server, tmp_path):
         results_url=server.url + "/scores",
     )
     messages = []
-    # Ada is better than the labels for 4 clusters, worse for 16; another user
-    # is better than everyone.
+    # For 4 clusters, Ada has a better score than the labels. For 16, Ada's
+    # score is worse, and Bob's is better but by less than 10%.
     server.scores = [
-        {"user": "ada", "n_clusters": 4, "inertia": inertia[4] * 0.9},
+        {"user": "ada", "n_clusters": 4, "inertia": inertia[4] * 0.95},
         {"user": "ada", "n_clusters": 4, "inertia": inertia[4] * 2},
-        {"user": "ada", "n_clusters": 16, "inertia": inertia[16] * 1.1},
-        {"user": "bob", "n_clusters": 16, "inertia": 0.0},
+        {"user": "ada", "n_clusters": 16, "inertia": inertia[16] * 1.2},
+        {"user": "bob", "n_clusters": 16, "inertia": inertia[16] * 0.95},
     ]
     submission = user.submit(
         "toy",
@@ -359,8 +359,30 @@ def test_submit_only_improvement(server, tmp_path):
     assert sent["time_s"] == {"16": 2.0}
     (tmp_path / "received.npz").write_bytes(sent["content"])
     assert check_submission("toy", tmp_path / "received.npz") == [16]
-    assert messages[0].startswith("4 clusters: not sent")
-    assert messages[1].startswith("16 clusters: sent, improves on")
+    assert re.match(
+        r"4 clusters: not sent, .* does not improve on your best", messages[0]
+    )
+    assert re.match(r"16 clusters: sent, .* improves on", messages[1])
+
+    # More than 10% above the best score of everyone: the listener would not
+    # publish it, even if Ada has no score yet, so it is not sent.
+    server.submissions.clear()
+    server.scores = [{"user": "bob", "n_clusters": 4, "inertia": inertia[4] / 1.2}]
+    messages.clear()
+    assert (
+        user.submit(
+            "toy",
+            {4: labels(4)},
+            submit_only_improvement=True,
+            data_dir=tmp_path,
+            log=messages.append,
+        )
+        is None
+    )
+    assert not server.submissions
+    assert re.match(
+        r"4 clusters: not sent, .* more than 10% above the best", messages[0]
+    )
 
     # Nothing improves: nothing is sent.
     server.submissions.clear()
@@ -378,3 +400,16 @@ def test_submit_only_improvement(server, tmp_path):
     assert user.submit(
         "toy", {4: labels(4)}, submit_only_improvement=True, data_dir=tmp_path
     )
+
+
+def test_submit_prints_by_default(monkeypatch):
+    calls = []
+
+    class FakeClient:
+        def submit(self, dataset, labels, **options):
+            calls.append(options)
+
+    monkeypatch.setattr(client, "Client", FakeClient)
+    client.submit("toy", {4: labels(4)}, submit_only_improvement=True)
+    client.submit("toy", {4: labels(4)}, log=None)
+    assert calls == [{"log": print, "submit_only_improvement": True}, {"log": None}]

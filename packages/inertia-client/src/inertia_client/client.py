@@ -34,7 +34,7 @@ import zipfile
 
 import numpy as np
 
-from inertia_scorer.challenge import Reader, dataset_info
+from inertia_scorer.challenge import RECORD_MARGIN, Reader, dataset_info
 from inertia_scorer.score import check_labels, read_labels, score_all
 
 DEFAULT_SERVER = "https://the-inertia-challenge-server.arthur-lacote.workers.dev"
@@ -96,6 +96,16 @@ def save_labels(path, labels: dict) -> None:
             array = array.astype(np.uint32)
         arrays[str(int(n_clusters))] = array
     np.savez(path, **arrays)
+
+
+def _lowest(scores: list[dict], user: str | None = None) -> dict[int, float]:
+    """{n_clusters: lowest inertia} of `scores`, or of the ones of `user`."""
+    best: dict[int, float] = {}
+    for score in scores:
+        if user is None or score.get("user") == user:
+            k, inertia = int(score["n_clusters"]), float(score["inertia"])
+            best[k] = min(inertia, best.get(k, inertia))
+    return best
 
 
 class Client:
@@ -236,13 +246,10 @@ class Client:
                 "Run: inertia-client login"
             ) from None
 
-    def best_inertia(self, dataset: str, user: str | None = None) -> dict[int, float]:
-        """The lowest inertia of the user on the scoreboard for each number of
-        clusters of `dataset`, as {n_clusters: inertia}. The user is `user`, else
-        the one of the token. Only the scores that the listener published count
-        (the ones that are not far above the best of everyone), so a number of
-        clusters can be missing."""
-        user = user or self.user()
+    def scores(self, dataset: str) -> list[dict]:
+        """The scores of `dataset` on the scoreboard, one dict per score. Only the
+        scores that the listener published are there: the ones that were not far
+        above the best of everyone."""
         request = urllib.request.Request(
             f"{self.results_url}/{urllib.parse.quote(dataset)}.jsonl",
             headers={"User-Agent": "inertia-client", "Cache-Control": "no-cache"},
@@ -252,34 +259,50 @@ class Client:
                 lines = response.read().decode().splitlines()
         except urllib.error.HTTPError as error:
             if error.code == 404:  # no score yet for this dataset
-                return {}
+                return []
             raise RuntimeError(
                 f"Could not read the scores of {dataset} ({error.code})."
             ) from None
-        best: dict[int, float] = {}
-        for line in filter(None, lines):
-            score = json.loads(line)
-            if score.get("user") == user:
-                k, inertia = int(score["n_clusters"]), float(score["inertia"])
-                best[k] = min(inertia, best.get(k, inertia))
-        return best
+        return [json.loads(line) for line in lines if line]
 
-    def improvements(
+    def best_inertia(self, dataset: str, user: str | None = None) -> dict[int, float]:
+        """The lowest inertia on the scoreboard for each number of clusters of
+        `dataset`, as {n_clusters: inertia}: of everyone, or of `user` if given.
+        A number of clusters without a score is missing."""
+        return _lowest(self.scores(dataset), user)
+
+    def worth_sending(
         self, dataset: str, path, *, data_dir=None
-    ) -> dict[int, float | None]:
-        """Score the submission `path` here and compare it to the best of the
-        user. Return {n_clusters: best} for the numbers of clusters that improve
-        on it, where `best` is the previous best inertia, None if there is none.
-        The dataset must be downloaded, see `inertia-download`."""
+    ) -> dict[int, tuple[bool, str]]:
+        """Score the submission `path` here and compare it to the scoreboard.
+        Return {n_clusters: (send, why)}. A number of clusters is worth sending
+        when it beats the best score of the user (or the user has none), and
+        when the listener will publish it: when it is less than 10% above the
+        best score of everyone. The dataset must be downloaded, see
+        `inertia-download`."""
         reader = Reader(dataset_info(dataset), data_dir)
-        best = self.best_inertia(dataset)
+        scores = self.scores(dataset)
+        best, mine = _lowest(scores), _lowest(scores, self.user())
         labels = dict(read_labels(reader.dataset, path))
-        improved = {}
+        decisions = {}
         for score in score_all(reader, labels):
-            previous = best.get(score.n_clusters)
-            if previous is None or score.inertia < previous:
-                improved[score.n_clusters] = previous
-        return improved
+            k, inertia = score.n_clusters, score.inertia
+            if k in best and inertia >= (1 + RECORD_MARGIN) * best[k]:
+                decisions[k] = (
+                    False,
+                    f"{inertia:.9e} is more than {RECORD_MARGIN:.0%} above the best "
+                    f"score ({best[k]:.9e}), it would not be published",
+                )
+            elif k in mine and inertia >= mine[k]:
+                decisions[k] = (
+                    False,
+                    f"{inertia:.9e} does not improve on your best ({mine[k]:.9e})",
+                )
+            elif k in mine:
+                decisions[k] = (True, f"{inertia:.9e} improves on {mine[k]:.9e}")
+            else:
+                decisions[k] = (True, f"{inertia:.9e}, no score of yours yet")
+        return decisions
 
     def submit(
         self,
@@ -303,10 +326,11 @@ class Client:
         `progress(done, total)` is called after each part, in bytes.
 
         With `submit_only_improvement`, the labels are first scored here, on the
-        dataset of `data_dir` (see `inertia-download`), and compared to the best
-        score of the user on the scoreboard: the numbers of clusters that do not
-        improve on it are not sent, and `log(message)` says which. When none
-        improves, nothing is sent and the result is None.
+        dataset of `data_dir` (see `inertia-download`), and compared to the
+        scoreboard: only the numbers of clusters that beat the best score of the
+        user and that the listener will publish (less than 10% above the best
+        score of everyone) are sent, see `worth_sending`. `log(message)` says
+        which. When none is, nothing is sent and the result is None.
         """
         if isinstance(labels, dict):
             with tempfile.TemporaryDirectory() as directory:
@@ -326,23 +350,15 @@ class Client:
         path = Path(labels)
         n_clusters = check_submission(dataset, path)
         if submit_only_improvement:
-            improved = self.improvements(dataset, path, data_dir=data_dir)
-            for k in n_clusters:
-                if log:
-                    previous = improved.get(k)
-                    log(
-                        f"{k} clusters: "
-                        + (
-                            "not sent, no improvement."
-                            if k not in improved
-                            else "sent, no score yet."
-                            if previous is None
-                            else f"sent, improves on {previous:.9e}."
-                        )
-                    )
-            if not improved:
+            decisions = self.worth_sending(dataset, path, data_dir=data_dir)
+            if log:
+                for k in n_clusters:
+                    send, why = decisions[k]
+                    log(f"{k} clusters: {'sent' if send else 'not sent'}, {why}.")
+            sent = {k for k, (send, _) in decisions.items() if send}
+            if not sent:
                 return None
-            if len(improved) < len(n_clusters):
+            if len(sent) < len(n_clusters):
                 with tempfile.TemporaryDirectory() as directory:
                     kept = Path(directory) / f"{dataset}.npz"
                     save_labels(
@@ -350,16 +366,15 @@ class Client:
                         {
                             k: array
                             for k, array in read_labels(dataset_info(dataset), path)
-                            if k in improved
+                            if k in sent
                         },
                     )
                     # The times of the numbers of clusters that are not sent go.
-                    skipped = set(n_clusters) - set(improved)
                     return self.submit(
                         dataset,
                         kept,
                         time_s=time_s
-                        and {k: s for k, s in time_s.items() if int(k) not in skipped},
+                        and {k: s for k, s in time_s.items() if int(k) in sent},
                         hardware=hardware,
                         tags=tags,
                         progress=progress,
@@ -439,9 +454,10 @@ class Client:
             time.sleep(poll)
 
 
-def submit(dataset: str, labels, **options) -> dict:
-    """`Client().submit`: check and send a submission, see `Client.submit`."""
-    return Client().submit(dataset, labels, **options)
+def submit(dataset: str, labels, *, log=print, **options) -> dict | None:
+    """`Client().submit`: check and send a submission, see `Client.submit`. Its
+    messages (what `submit_only_improvement` sends, and why) are printed."""
+    return Client().submit(dataset, labels, log=log, **options)
 
 
 def _print_submission(submission: dict) -> None:
@@ -531,7 +547,8 @@ def main(argv=None):
         "--submit-only-improvement",
         action="store_true",
         help="score the labels here (the dataset must be downloaded) and only send "
-        "the numbers of clusters that beat your best score on the scoreboard",
+        "the numbers of clusters that beat your best score and that are less than "
+        "10%% above the best score of everyone",
     )
     send.add_argument(
         "--data-dir",
@@ -588,7 +605,7 @@ def main(argv=None):
                 log=print,
             )
             if submission is None:
-                sys.exit("Nothing sent: no number of clusters improves on your best.")
+                sys.exit("Nothing sent: no number of clusters is worth sending.")
             if args.wait:
                 submission = client.wait(submission["id"])
             _print_submission(submission)

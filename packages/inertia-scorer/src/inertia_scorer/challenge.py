@@ -22,6 +22,9 @@ DATA_DIR_VARIABLE = "INERTIA_CHALLENGE_DATA"
 # buffer aligned on it. 4096 is a multiple of the block sizes in use.
 DIRECT_ALIGNMENT = 4096
 DEFAULT_DATA_DIR = "~/.cache/the-inertia-challenge"
+# The listener publishes a score when its inertia is below
+# (1 + RECORD_MARGIN) * the best inertia published so far.
+RECORD_MARGIN = 0.1
 
 
 @dataclass(frozen=True)

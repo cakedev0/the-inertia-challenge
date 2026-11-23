@@ -49,7 +49,7 @@ import urllib.error
 import urllib.request
 import zipfile
 
-from .challenge import Dataset, Reader, dataset_info
+from .challenge import RECORD_MARGIN, Dataset, Reader, dataset_info
 from .score import (
     DEFAULT_CHUNK_MB,
     DEFAULT_THREADS,
@@ -58,8 +58,6 @@ from .score import (
     score_all,
 )
 
-# A score is published when its inertia is below (1 + RECORD_MARGIN) * best.
-RECORD_MARGIN = 0.1
 TOKEN_VARIABLE = "INERTIA_QUEUE_TOKEN"
 MAX_USER_LENGTH = 64
 MAX_HARDWARE_LENGTH = 200
