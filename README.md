@@ -24,10 +24,9 @@ inertia-client login  # once, with GitHub
 from sklearn.cluster import KMeans
 
 import inertia_client
-from inertia_scorer import Reader, get_dataset
+from inertia_scorer import load_dataset
 
-reader = Reader(get_dataset("year_prediction_msd_standardized"))
-X = reader.read(0, reader.shape[0])  # float32 array, (515345, 90)
+X = load_dataset("year_prediction_msd_standardized")  # float32, (515345, 90)
 
 labels = KMeans(5, init="random", n_init=1).fit_predict(X)
 
@@ -101,14 +100,17 @@ four others.
 
 All the values are float32. A dense dataset is one file of rows without a
 header (`<name>.f32`), so `np.memmap` and `np.fromfile` read it. A sparse one
-is a CSR matrix in three files. `inertia_scorer.Reader` reads both by ranges of
-rows:
+is a CSR matrix in three files. `inertia_scorer.load_dataset` reads all the
+rows of either, and `inertia_scorer.Reader` reads them by ranges, for the
+datasets that don't fit in memory:
 
 ```python
-from inertia_scorer import Reader, get_dataset
+from inertia_scorer import Reader, dataset_info, load_dataset
 
-reader = Reader(get_dataset("sift_128"))
-X = reader.read(0, reader.shape[0])  # array, or scipy.sparse.csr_matrix
+X = load_dataset("sift_128")  # array, or scipy.sparse.csr_matrix
+
+reader = Reader(dataset_info("deep_100M"))
+X = reader.read(0, 1_000_000)  # the first million rows
 ```
 
 `inertia-download` checks the sha256 of what it wrote against the reference copy,
@@ -124,13 +126,11 @@ A submission is a `.npz` file for one dataset. Each key is a number of clusters
 import numpy as np
 from sklearn.cluster import KMeans
 
-from inertia_scorer import Reader, get_dataset
+from inertia_scorer import dataset_info, load_dataset
 
-dataset = get_dataset("sift_128")
-reader = Reader(dataset)
-X = reader.read(0, reader.shape[0])
+X = load_dataset("sift_128")
 submission = {}
-for k in dataset.n_clusters:  # 10, 100, 1000, 10000
+for k in dataset_info("sift_128").n_clusters:  # 10, 100, 1000, 10000
     labels = KMeans(n_clusters=k, n_init=1, max_iter=10).fit(X).labels_
     submission[str(k)] = labels.astype(np.uint32)
 np.savez("sift_128.npz", **submission)

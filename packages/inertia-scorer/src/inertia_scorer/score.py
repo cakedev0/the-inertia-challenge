@@ -37,7 +37,7 @@ import numpy as np
 import scipy.sparse as sp
 
 from . import _sums
-from .challenge import SHA256, Dataset, Reader, get_dataset
+from .challenge import SHA256, Dataset, Reader, dataset_info
 
 DEFAULT_CHUNK_MB = 100
 DEFAULT_THREADS = 4
@@ -289,7 +289,7 @@ def score_submission(
     threads: int = DEFAULT_THREADS,
 ) -> list[Score]:
     """Scores of all the arrays of the submission `path`, by number of clusters."""
-    reader = Reader(get_dataset(dataset_name), data_dir)
+    reader = Reader(dataset_info(dataset_name), data_dir)
     submission = np.load(path)
     if not isinstance(submission, np.lib.npyio.NpzFile):
         raise ValueError(f"A submission is a .npz file, {path} is not one.")
@@ -347,7 +347,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     try:
-        reader = Reader(get_dataset(args.dataset), args.data_dir)
+        reader = Reader(dataset_info(args.dataset), args.data_dir)
         warning = checksum_warning(reader)
         if warning:
             print(warning, file=sys.stderr)

@@ -49,7 +49,7 @@ import urllib.error
 import urllib.request
 import zipfile
 
-from .challenge import Dataset, Reader, get_dataset
+from .challenge import Dataset, Reader, dataset_info
 from .score import (
     DEFAULT_CHUNK_MB,
     DEFAULT_THREADS,
@@ -360,7 +360,7 @@ def process(
     there, git) are raised, and the submission can be processed again.
     """
     try:
-        dataset = get_dataset(submission.dataset)
+        dataset = dataset_info(submission.dataset)
         check_metadata(submission.user, submission.hardware, submission.tags)
         times = check_times(submission.time_s)
     except (ValueError, TypeError) as error:

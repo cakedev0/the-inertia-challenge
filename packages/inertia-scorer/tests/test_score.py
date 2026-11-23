@@ -171,6 +171,19 @@ def test_chunks_cover_the_rows(make_dataset, tmp_path):
     np.testing.assert_array_equal(sparse.read(10, 20).toarray(), X[10:20].toarray())
 
 
+def test_load_dataset(make_dataset, tmp_path):
+    X = dense_data()
+    make_dataset(X, "dense")
+    loaded = challenge.load_dataset("dense", tmp_path)
+    assert loaded.dtype == np.float32
+    np.testing.assert_array_equal(loaded, X)
+    X = sp.random(300, 50, density=0.1, format="csr", dtype=np.float32, random_state=0)
+    make_dataset(X, "sparse")
+    loaded = challenge.load_dataset("sparse", tmp_path)
+    assert sp.issparse(loaded) and loaded.dtype == np.float32
+    np.testing.assert_array_equal(loaded.toarray(), X.toarray())
+
+
 def test_one_sample_per_cluster(make_dataset, tmp_path):
     X = dense_data(n_samples=50)
     reader = Reader(make_dataset(X), tmp_path)

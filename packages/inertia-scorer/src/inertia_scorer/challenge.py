@@ -175,7 +175,9 @@ def data_dir(path=None) -> Path:
     return Path(path).expanduser()
 
 
-def get_dataset(name: str) -> Dataset:
+def dataset_info(name: str) -> Dataset:
+    """The description of the dataset `name`: its shape, its numbers of clusters
+    and whether it is sparse. It does not need the dataset to be downloaded."""
     if name not in DATASETS:
         raise ValueError(f"Unknown dataset {name!r}. Datasets: {', '.join(DATASETS)}")
     return DATASETS[name]
@@ -327,3 +329,15 @@ class Reader:
         if done < start + 4 * count:
             return None
         return buffer[start : start + 4 * count].view("<f4")
+
+
+def load_dataset(name: str, data_dir=None):
+    """All the rows of the dataset `name`, as float32: an array of shape
+    `(n_samples, n_features)`, or a `scipy.sparse.csr_matrix` for a sparse
+    dataset. `inertia-download` must have downloaded it to `data_dir` (default:
+    $INERTIA_CHALLENGE_DATA, else ~/.cache/the-inertia-challenge).
+
+    To read a dataset that does not fit in memory, use `Reader`.
+    """
+    reader = Reader(dataset_info(name), data_dir)
+    return reader.read(0, reader.shape[0])

@@ -321,7 +321,7 @@ def test_command_line(server, tmp_path, capsys, monkeypatch):
 
 def toy_data(tmp_path):
     X = np.random.default_rng(0).standard_normal((N_SAMPLES, 5)).astype(np.float32)
-    dataset = challenge.get_dataset("toy")
+    dataset = challenge.dataset_info("toy")
     download._write_dense(dataset, tmp_path, [X[:3], X[3:]])
     challenge.write_meta(dataset, tmp_path, {"n_samples": N_SAMPLES, "n_features": 5})
     return Reader(dataset, tmp_path)

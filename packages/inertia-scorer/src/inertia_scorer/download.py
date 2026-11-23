@@ -34,7 +34,7 @@ from .challenge import (
     Dataset,
     data_dir,
     data_files,
-    get_dataset,
+    dataset_info,
     is_present,
     read_meta,
     write_meta,
@@ -475,7 +475,7 @@ def main(argv=None):
         return
     names = list(DATASETS) if args.datasets == ["all"] else args.datasets
     try:
-        datasets = [get_dataset(name) for name in names]
+        datasets = [dataset_info(name) for name in names]
     except ValueError as error:
         sys.exit(f"Error: {error}")
     for dataset in datasets:

@@ -1,6 +1,13 @@
 """Datasets and scoring of the inertia challenge."""
 
-from .challenge import DATASETS, Dataset, DatasetNotFound, Reader, get_dataset
+from .challenge import (
+    DATASETS,
+    Dataset,
+    DatasetNotFound,
+    Reader,
+    dataset_info,
+    load_dataset,
+)
 from .score import Score, score_all, score_labels, score_submission
 
 __all__ = [
@@ -9,7 +16,8 @@ __all__ = [
     "DatasetNotFound",
     "Reader",
     "Score",
-    "get_dataset",
+    "dataset_info",
+    "load_dataset",
     "score_all",
     "score_labels",
     "score_submission",

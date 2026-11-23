@@ -34,7 +34,7 @@ import zipfile
 
 import numpy as np
 
-from inertia_scorer.challenge import Reader, get_dataset
+from inertia_scorer.challenge import Reader, dataset_info
 from inertia_scorer.score import check_labels, read_labels, score_all
 
 DEFAULT_SERVER = "https://the-inertia-challenge-server.arthur-lacote.workers.dev"
@@ -68,7 +68,7 @@ def token_path() -> Path:
 def check_submission(dataset_name: str, path) -> list[int]:
     """Check the `.npz` file `path` as the server will, without the dataset.
     Return its numbers of clusters. Raise a ValueError if it would be rejected."""
-    dataset = get_dataset(dataset_name)
+    dataset = dataset_info(dataset_name)
     n_clusters = []
     try:
         for k, labels in read_labels(dataset, path):
@@ -271,7 +271,7 @@ class Client:
         user. Return {n_clusters: best} for the numbers of clusters that improve
         on it, where `best` is the previous best inertia, None if there is none.
         The dataset must be downloaded, see `inertia-download`."""
-        reader = Reader(get_dataset(dataset), data_dir)
+        reader = Reader(dataset_info(dataset), data_dir)
         best = self.best_inertia(dataset)
         labels = dict(read_labels(reader.dataset, path))
         improved = {}
@@ -349,7 +349,7 @@ class Client:
                         kept,
                         {
                             k: array
-                            for k, array in read_labels(get_dataset(dataset), path)
+                            for k, array in read_labels(dataset_info(dataset), path)
                             if k in improved
                         },
                     )
