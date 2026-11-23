@@ -18,6 +18,9 @@ from pathlib import Path
 import numpy as np
 
 DATA_DIR_VARIABLE = "INERTIA_CHALLENGE_DATA"
+# Direct reads start and end at a multiple of the block size of the disk, in a
+# buffer aligned on it. 4096 is a multiple of the block sizes in use.
+DIRECT_ALIGNMENT = 4096
 DEFAULT_DATA_DIR = "~/.cache/the-inertia-challenge"
 
 
@@ -228,8 +231,11 @@ class Reader:
     threads.
     """
 
-    def __init__(self, dataset: Dataset, directory=None):
+    def __init__(self, dataset: Dataset, directory=None, direct: bool = True):
         self.dataset = dataset
+        # Read the dense files without the page cache, where the system and the
+        # filesystem can.
+        self.direct = direct and hasattr(os, "O_DIRECT")
         self.directory = data_dir(directory)
         self.meta = read_meta(dataset, self.directory)
         if self.meta.get("n_samples", 0) < dataset.n_samples:
@@ -268,12 +274,12 @@ class Reader:
         """Rows `start` to `stop`: an array, or a CSR matrix for a sparse dataset."""
         n_features = self.shape[1]
         if not self.dataset.sparse:
-            rows = np.fromfile(
-                self.files[0],
-                dtype="<f4",
-                count=(stop - start) * n_features,
-                offset=4 * start * n_features,
-            )
+            count, offset = (stop - start) * n_features, 4 * start * n_features
+            rows = self._read_direct(count, offset) if self.direct else None
+            if rows is None:
+                rows = np.fromfile(
+                    self.files[0], dtype="<f4", count=count, offset=offset
+                )
             return rows.reshape(stop - start, n_features)
 
         import scipy.sparse as sp
@@ -285,3 +291,39 @@ class Reader:
         return sp.csr_matrix(
             (data, indices, indptr - first), shape=(stop - start, n_features)
         )
+
+    def _read_direct(self, count: int, offset: int):
+        """`count` float32 at byte `offset` of the dense file, read without the
+        page cache, or None if it can't be: `np.fromfile` then reads them.
+
+        The page cache costs more than it brings for a file that does not fit
+        in memory: each page read evicts another one.
+        """
+        align = DIRECT_ALIGNMENT
+        first = offset - offset % align
+        size = -(-(offset + 4 * count - first) // align) * align
+        try:
+            file = os.open(self.files[0], os.O_RDONLY | os.O_DIRECT)
+        except OSError:
+            self.direct = False
+            return None
+        try:
+            buffer = np.empty(size + align, dtype=np.uint8)
+            shift = -buffer.ctypes.data % align
+            buffer = buffer[shift : shift + size]
+            done = 0
+            # A read can stop before `size`, and stops at the end of the file.
+            while done < size:
+                read = os.preadv(file, [buffer[done:]], first + done)
+                if read == 0:
+                    break
+                done += read
+        except OSError:
+            self.direct = False
+            return None
+        finally:
+            os.close(file)
+        start = offset - first
+        if done < start + 4 * count:
+            return None
+        return buffer[start : start + 4 * count].view("<f4")
