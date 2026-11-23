@@ -1,7 +1,8 @@
 # inertia-client
 
-Submit labels to [the inertia challenge](../../README.md): `inertia-client` and
-the `inertia_client` Python package.
+Submit labels to
+[the inertia challenge](https://github.com/cakedev0/the-inertia-challenge):
+`inertia-client` and the `inertia_client` Python package.
 
 ```bash
 inertia-client login
@@ -17,6 +18,11 @@ only tell who you are: it gives no access to your repositories.
 before sending it: the server takes one submission per day and per dataset.
 `check` only does the check. An upload that was stopped resumes with
 `inertia-client resume <id> FILE`, for 6 hours.
+
+The file is a `.npz` for one dataset. Each key is a number of clusters `k`, and
+its array has the label of each sample: dtype uint32, shape `(n_samples,)`,
+values in `[0, k)`. From Python, `submit` takes `{k: labels}` and writes the
+file.
 
 `--time`, `--hardware` and `--tag` are what you say about the submission. They
 are shown on the scoreboard as you give them. The time is for one number of
