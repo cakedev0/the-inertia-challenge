@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wheels:
+    name: Wheels of inertia-scorer on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-15, macos-15-intel, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pypa/cibuildwheel@v4.3.5
+        with:
+          package-dir: packages/inertia-scorer
+      - uses: actions/upload-artifact@v7
+        with:
+          name: scorer-wheels-${{ matrix.os }}
+          path: wheelhouse/*.whl
+
+  sdists:
+    # The sdist of inertia-scorer, and the sdist and the wheel of inertia-client
+    # (pure Python).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: pipx run build packages/inertia-scorer --sdist --outdir dist/scorer
+      - run: pipx run build packages/inertia-client --outdir dist/client
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sdists
+          path: dist/
+
+  publish-scorer:
+    # Needs a trusted publisher on PyPI for inertia-scorer, this repository, the
+    # workflow release.yml and the "pypi" environment.
+    if: github.event_name == 'release'
+    needs: [wheels, sdists]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: scorer-wheels-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        with:
+          name: sdists
+          path: sdists
+      - run: mv sdists/scorer/*.tar.gz dist/
+      - uses: pypa/gh-action-pypi-publish@v1.14.3
+
+  publish-client:
+    # inertia-client depends on inertia-scorer: it goes second. It needs its own
+    # trusted publisher on PyPI, for the same workflow and environment.
+    if: github.event_name == 'release'
+    needs: publish-scorer
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: sdists
+          path: sdists
+      - run: mkdir dist && mv sdists/client/* dist/
+      - uses: pypa/gh-action-pypi-publish@v1.14.3
