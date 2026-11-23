@@ -1,5 +1,8 @@
 # cython: language_level=3, boundscheck=False, wraparound=False
 # cython: cdivision=True, initializedcheck=False
+# The functions share no state, and their loops already run in parallel with
+# the GIL released: they need no GIL on a free-threaded Python.
+# cython: freethreading_compatible=True
 """Loops of the scorer on a chunk of rows.
 
 The sums of the clusters of all the arrays of labels are the rows of one array,

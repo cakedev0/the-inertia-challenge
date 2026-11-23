@@ -1,6 +1,10 @@
 from dataclasses import replace
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
+import sysconfig
 
 import numpy as np
 import pytest
@@ -281,3 +285,19 @@ def test_n_clusters_for():
     assert challenge.n_clusters_for(449) == ()
     for dataset in challenge.DATASETS.values():
         assert dataset.n_clusters == challenge.n_clusters_for(dataset.n_samples)
+
+
+@pytest.mark.skipif(
+    not sysconfig.get_config_var("Py_GIL_DISABLED"), reason="not a free-threaded Python"
+)
+def test_free_threading():
+    # A new interpreter: in this one, another extension may have enabled the GIL.
+    # Importing an extension that is not marked as free-threading compatible
+    # enables it, with a RuntimeWarning.
+    code = (
+        "import sys, warnings; warnings.simplefilter('error'); "
+        "import numpy, scipy.sparse, inertia_scorer._sums, inertia_scorer.score; "
+        "assert not sys._is_gil_enabled()"
+    )
+    env = {key: value for key, value in os.environ.items() if key != "PYTHON_GIL"}
+    subprocess.run([sys.executable, "-c", code], check=True, env=env)
