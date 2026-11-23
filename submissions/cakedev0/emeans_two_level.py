@@ -16,6 +16,31 @@ support them.
 `fit` writes `OUT/<dataset>.npz` and `OUT/<dataset>.json`, and skips the
 datasets that already have their `.json`. `submit` sends them: it needs
 `inertia-client login`, not the datasets.
+
+Set-up for one socket of the 2-socket Xeon 6787P (86 cores per socket), from
+the benchmarks of sklearn-contrib-emeans (research/h-means, pull request 23):
+
+    OMP_NUM_THREADS=86 OMP_PROC_BIND=close OMP_PLACES=cores \
+        numactl --cpunodebind=4-7 --preferred-many=4-7 python ... fit OUT ...
+
+- MKL, 86 threads, one pinned per core. Hyperthreads (172 threads) only gain
+  2% to 5%.
+- The data must be in the memory of the socket of the threads. deep_500M is
+  179 GiB (up to 223 GiB with the buffers of the fit) and a socket has 251 GiB:
+  it only fits if the page cache of that socket is dropped first
+  (`posix_fadvise(..., POSIX_FADV_DONTNEED)` on the files that fill it, see
+  `numastat -m`). Linux does not evict the page cache to keep an allocation
+  on its node: the data silently goes to the other socket.
+- `--preferred-many` and not `--membind`, so that a fit that needs a bit more
+  than the socket still runs. This needs the `all` slot of benchlock.
+
+The submissions of 2026-11-23 did not have this set-up: the threads were kept
+on one socket with `taskset -c 0-85`, without pinning, without dropping the
+page cache and with the default memory policy. With sklearn-contrib-emeans
+from PyPI next to MKL, `OMP_PROC_BIND` made the fits 20 to 40 times slower.
+Up to deep_100M the times match the benchmarks. On deep_500M they are about
+1.3 times longer: 1350 s against 1008 s for 500,000 clusters with
+`revival=0.1`, for the same inertia.
 """
 
 import argparse
