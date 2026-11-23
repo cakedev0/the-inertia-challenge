@@ -55,7 +55,7 @@ from .score import (
     DEFAULT_THREADS,
     checksum_warning,
     read_labels,
-    score_labels,
+    score_all,
 )
 
 # A score is published when its inertia is below (1 + RECORD_MARGIN) * best.
@@ -376,12 +376,14 @@ def process(
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     outcomes = []
     try:
-        for n_clusters, labels in read_labels(dataset, submission.labels):
-            score = asdict(
-                score_labels(
-                    reader, labels, n_clusters, chunk_bytes=chunk_bytes, threads=threads
-                )
-            )
+        scores = score_all(
+            reader,
+            dict(read_labels(dataset, submission.labels)),
+            chunk_bytes=chunk_bytes,
+            threads=threads,
+        )
+        for score in map(asdict, scores):
+            n_clusters = score["n_clusters"]
             others = [
                 line["inertia"]
                 for line in published

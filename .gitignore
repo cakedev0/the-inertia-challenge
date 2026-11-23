@@ -3,3 +3,8 @@ __pycache__/
 .ruff_cache/
 .venv/
 *.npz
+build/
+*.egg-info/
+*.so
+*.pyd
+packages/inertia-scorer/src/inertia_scorer/_sums.c

@@ -12,7 +12,8 @@ The score of labels is the sum of the squared distances of the samples to the
 mean of their cluster. No centers are needed: for given labels, the means are
 the centers with the lowest inertia.
 
-It is computed in one pass on the data, read by chunks, with
+All the arrays of a submission are scored in one pass on the data, read by
+chunks, with
 
     inertia = sum_i |x_i|^2 - sum_j |s_j|^2 / n_j
 
@@ -27,6 +28,7 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 import json
+import struct
 import sys
 import time
 import zipfile
@@ -34,6 +36,7 @@ import zipfile
 import numpy as np
 import scipy.sparse as sp
 
+from . import _sums
 from .challenge import SHA256, Dataset, Reader, get_dataset
 
 DEFAULT_CHUNK_MB = 100
@@ -99,41 +102,90 @@ def read_labels(dataset: Dataset, path):
             keys[int(key)] = key
     if not keys:
         raise ValueError("The submission is empty.")
-    with np.load(path) as submission:
+    yield from _arrays(path, keys)
+
+
+def _arrays(path, keys: dict[int, str]):
+    """Yield (n_clusters, array) for the arrays `keys` of the `.npz` file `path`,
+    by increasing number of clusters.
+
+    The arrays that are not compressed, as `np.savez` writes them, are mapped
+    and not loaded: all the labels of a submission for a large dataset are then
+    scored together without holding them in memory.
+    """
+    with np.load(path) as submission, zipfile.ZipFile(path) as archive:
         for n_clusters in sorted(keys):
-            yield n_clusters, submission[keys[n_clusters]]
+            mapped = _map_array(path, archive, keys[n_clusters] + ".npy")
+            if mapped is None:
+                mapped = submission[keys[n_clusters]]
+            yield n_clusters, mapped
 
 
-def _chunk_sums(reader: Reader, labels, start: int, stop: int):
-    """Per-cluster sums and counts of rows `start` to `stop`, for the clusters that
-    have rows in this range, and the sum of the squared norms of the rows."""
-    X = reader.read(start, stop).astype(np.float64)
-    clusters, inverse, counts = np.unique(
-        labels[start:stop], return_inverse=True, return_counts=True
-    )
-    n_rows = stop - start
+def _map_array(path, archive: zipfile.ZipFile, name: str):
+    """Read-only map of the array `name` of the open `.npz` file `path`, or None
+    if it can't be mapped: `np.load` then reads it, or says why it can't."""
+    try:
+        info = archive.getinfo(name)
+        if info.compress_type != zipfile.ZIP_STORED or info.flag_bits & 0x1:
+            return None
+        with archive.open(info) as member:
+            version = np.lib.format.read_magic(member)
+            if version == (1, 0):
+                header = np.lib.format.read_array_header_1_0(member)
+            elif version == (2, 0):
+                header = np.lib.format.read_array_header_2_0(member)
+            else:
+                return None
+            shape, fortran_order, dtype = header
+            header_bytes = member.tell()
+        if dtype.hasobject or fortran_order or len(shape) != 1 or shape[0] == 0:
+            return None
+        if header_bytes + shape[0] * dtype.itemsize != info.file_size:
+            return None
+        # The name and the extra field of the local header of the member can
+        # differ from the ones of the directory of the archive: their lengths
+        # are read from the file.
+        with open(path, "rb") as file:
+            file.seek(info.header_offset + 26)
+            name_bytes, extra_bytes = struct.unpack("<HH", file.read(4))
+        offset = info.header_offset + 30 + name_bytes + extra_bytes + header_bytes
+        return np.memmap(path, dtype=dtype, mode="r", offset=offset, shape=shape)
+    except (KeyError, ValueError, OSError, struct.error):
+        return None
+
+
+def _read_chunk(reader: Reader, all_labels, start: int, stop: int):
+    """Rows `start` to `stop` and their labels, one row per array of labels."""
+    X = reader.read(start, stop)
+    labels = np.empty((len(all_labels), stop - start), dtype=np.uint32)
+    for row, array in zip(labels, all_labels):
+        row[:] = array[start:stop]
     if sp.issparse(X):
-        indicator = sp.csr_matrix(
-            (np.ones(n_rows), (inverse, np.arange(n_rows))),
-            shape=(len(clusters), n_rows),
+        # scipy chooses the dtype of the indices from their values.
+        X = (
+            np.ascontiguousarray(X.data, dtype=np.float32),
+            X.indices.astype(np.int64),
+            X.indptr.astype(np.int64),
         )
-        sums = (indicator @ X).tocsr()
-        squared_norms = float((X.data * X.data).sum())
+    return X, labels
+
+
+def _squared_norms(X) -> float:
+    """Sum of the squared norms of the rows of a chunk."""
+    if isinstance(X, tuple):
+        data, _, indptr = X
+        norms = np.empty(len(indptr) - 1)
+        _sums.squared_norms_sparse(data, indptr, norms)
     else:
-        # One stored value per column: the product adds each row of X to the
-        # row of its cluster, without sorting the rows.
-        indicator = sp.csc_matrix(
-            (np.ones(n_rows), inverse, np.arange(n_rows + 1)),
-            shape=(len(clusters), n_rows),
-        )
-        sums = indicator @ X
-        # Not a BLAS dot: its threads would add to the ones of the scorer.
-        squared_norms = float(np.einsum("ij,ij->i", X, X).sum())
-    return clusters, counts, sums, squared_norms
+        norms = np.empty(len(X))
+        _sums.squared_norms_dense(X, norms)
+    return float(norms.sum())
 
 
-def _add_rows(sums, rows, values):
-    sums[rows] += values
+def _add_chunk(X, *arguments) -> bool:
+    if isinstance(X, tuple):
+        return _sums.add_sparse(*X, *arguments)
+    return _sums.add_dense(X, *arguments)
 
 
 def _in_order(executor, function, arguments, window):
@@ -148,6 +200,72 @@ def _in_order(executor, function, arguments, window):
         yield pending.popleft().result()
 
 
+def score_all(
+    reader: Reader,
+    labels: dict,
+    *,
+    chunk_bytes: int = DEFAULT_CHUNK_MB << 20,
+    threads: int = DEFAULT_THREADS,
+) -> list[Score]:
+    """Inertia of each array of `labels`, {n_clusters: labels}, on the dataset of
+    `reader`, by increasing number of clusters.
+
+    The dataset is read once, by chunks of at most `chunk_bytes`. Each row is
+    added to the sum of its cluster, in the order of the rows, so the sums of
+    the clusters depend neither on `threads`, nor on `chunk_bytes`, nor on the
+    other arrays of `labels`.
+    """
+    n_samples, n_features = reader.shape
+    labels = dict(sorted(labels.items()))
+    for n_clusters, array in labels.items():
+        check_labels(array, n_clusters, n_samples)
+
+    # The sums of all the arrays of labels, one after the other.
+    offsets = np.cumsum([0, *labels], dtype=np.int64)
+    sums = np.zeros((offsets[-1], n_features), dtype=np.float64)
+    counts = np.zeros(offsets[-1], dtype=np.int64)
+    squared_norms = 0.0
+    arguments = [
+        (reader, list(labels.values()), start, stop)
+        for start, stop in reader.chunks(chunk_bytes)
+    ]
+    with ThreadPoolExecutor(threads) as readers, ThreadPoolExecutor(threads) as adders:
+        for X, chunk_labels in _in_order(
+            readers, _read_chunk, arguments, window=threads
+        ):
+            chunk_norms = adders.submit(_squared_norms, X)
+            # Each thread adds the rows of its clusters.
+            parts = [
+                adders.submit(
+                    _add_chunk, X, chunk_labels, offsets, sums, counts, part, threads
+                )
+                for part in range(threads)
+            ]
+            if not all([part.result() for part in parts]):
+                raise ValueError("The labels changed while they were scored.")
+            squared_norms += chunk_norms.result()
+
+    scores = []
+    for n_clusters, start, stop in zip(labels, offsets, offsets[1:]):
+        nonempty = counts[start:stop] > 0
+        sums_squared_norms = np.einsum("ij,ij->i", sums[start:stop], sums[start:stop])
+        between = float(
+            (sums_squared_norms[nonempty] / counts[start:stop][nonempty]).sum()
+        )
+        inertia = max(0.0, squared_norms - between)
+        scores.append(
+            Score(
+                dataset=reader.dataset.name,
+                n_clusters=n_clusters,
+                n_samples=n_samples,
+                inertia=inertia,
+                mean_inertia=inertia / n_samples,
+                n_nonempty=int(nonempty.sum()),
+            )
+        )
+    return scores
+
+
 def score_labels(
     reader: Reader,
     labels,
@@ -156,53 +274,10 @@ def score_labels(
     chunk_bytes: int = DEFAULT_CHUNK_MB << 20,
     threads: int = DEFAULT_THREADS,
 ) -> Score:
-    """Inertia of `labels` on the dataset of `reader`.
-
-    The dataset is read by chunks of at most `chunk_bytes`. The chunks are added
-    in order, so the result does not depend on `threads`.
-    """
-    n_samples, n_features = reader.shape
-    check_labels(labels, n_clusters, n_samples)
-
-    sums = np.zeros((n_clusters, n_features), dtype=np.float64)
-    counts = np.zeros(n_clusters, dtype=np.int64)
-    squared_norms = 0.0
-    arguments = [
-        (reader, labels, start, stop) for start, stop in reader.chunks(chunk_bytes)
-    ]
-    with ThreadPoolExecutor(threads) as executor, ThreadPoolExecutor(threads) as adders:
-        for clusters, chunk_counts, chunk_sums, chunk_norms in _in_order(
-            executor, _chunk_sums, arguments, window=threads
-        ):
-            if sp.issparse(chunk_sums):
-                rows = np.repeat(clusters, np.diff(chunk_sums.indptr))
-                sums[rows, chunk_sums.indices] += chunk_sums.data
-            else:
-                # With many clusters, adding to `sums` costs as much as the
-                # rest. Each thread adds a range of clusters, so they write to
-                # different rows.
-                bounds = np.linspace(0, len(clusters), threads + 1).astype(int)
-                additions = [
-                    adders.submit(_add_rows, sums, clusters[a:b], chunk_sums[a:b])
-                    for a, b in zip(bounds, bounds[1:])
-                ]
-                for addition in additions:
-                    addition.result()
-            counts[clusters] += chunk_counts
-            squared_norms += chunk_norms
-
-    nonempty = counts > 0
-    sums_squared_norms = np.einsum("ij,ij->i", sums, sums)
-    between = float((sums_squared_norms[nonempty] / counts[nonempty]).sum())
-    inertia = max(0.0, squared_norms - between)
-    return Score(
-        dataset=reader.dataset.name,
-        n_clusters=n_clusters,
-        n_samples=n_samples,
-        inertia=inertia,
-        mean_inertia=inertia / n_samples,
-        n_nonempty=int(nonempty.sum()),
-    )
+    """Inertia of `labels` on the dataset of `reader`. See `score_all`."""
+    return score_all(
+        reader, {n_clusters: labels}, chunk_bytes=chunk_bytes, threads=threads
+    )[0]
 
 
 def score_submission(
@@ -215,7 +290,6 @@ def score_submission(
 ) -> list[Score]:
     """Scores of all the arrays of the submission `path`, by number of clusters."""
     reader = Reader(get_dataset(dataset_name), data_dir)
-    scores = []
     submission = np.load(path)
     if not isinstance(submission, np.lib.npyio.NpzFile):
         raise ValueError(f"A submission is a .npz file, {path} is not one.")
@@ -227,18 +301,9 @@ def score_submission(
                     f"The keys of a submission are numbers of clusters, got {key!r}."
                 )
             keys[int(key)] = key
-        for n_clusters in sorted(keys):
-            labels = submission[keys[n_clusters]]
-            scores.append(
-                score_labels(
-                    reader,
-                    labels,
-                    n_clusters,
-                    chunk_bytes=chunk_bytes,
-                    threads=threads,
-                )
-            )
-    return scores
+    return score_all(
+        reader, dict(_arrays(path, keys)), chunk_bytes=chunk_bytes, threads=threads
+    )
 
 
 def checksum_warning(reader: Reader) -> str | None:

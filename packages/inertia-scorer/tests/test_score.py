@@ -1,3 +1,4 @@
+from dataclasses import replace
 import json
 from pathlib import Path
 
@@ -74,6 +75,87 @@ def test_sparse_against_brute_force(make_dataset, tmp_path, chunk_bytes):
 
     assert result.inertia == pytest.approx(brute_force_inertia(X, labels), rel=1e-9)
     assert result.n_nonempty == 9
+
+
+@pytest.mark.parametrize("sparse", [False, True])
+def test_all_the_arrays_in_one_pass(make_dataset, tmp_path, monkeypatch, sparse):
+    if sparse:
+        X = sp.random(300, 50, density=0.1, format="csr", dtype=np.float32, rng=0)
+    else:
+        X = dense_data()
+    reader = Reader(make_dataset(X), tmp_path)
+    rng = np.random.default_rng(1)
+    labels = {k: rng.integers(0, k, X.shape[0]).astype(np.uint32) for k in (40, 3, 200)}
+    alone = [
+        score.score_labels(reader, labels[k], k, chunk_bytes=2000)
+        for k in sorted(labels)
+    ]
+
+    reads = []
+    read = Reader.read
+    monkeypatch.setattr(
+        Reader, "read", lambda self, *rows: reads.append(rows) or read(self, *rows)
+    )
+    together = score.score_all(reader, labels, chunk_bytes=2000)
+
+    # Exactly the scores of each array alone, and each chunk is read once.
+    assert together == alone
+    assert sorted(reads) == reader.chunks(2000)
+
+
+@pytest.mark.parametrize("sparse", [False, True])
+def test_same_sums_for_all_threads_and_chunks(make_dataset, tmp_path, sparse):
+    if sparse:
+        X = sp.random(300, 50, density=0.1, format="csr", dtype=np.float32, rng=0)
+    else:
+        X = dense_data(n_samples=300)
+    reader = Reader(make_dataset(X), tmp_path)
+    labels = np.random.default_rng(1).integers(0, 40, 300).astype(np.uint32)
+
+    # Chunks of all the rows: the sum of the squared norms is the same too.
+    reference = score.score_labels(reader, labels, 40, threads=1)
+    for threads in (2, 5, 64):
+        assert score.score_labels(reader, labels, 40, threads=threads) == reference
+    # Smaller chunks only change the rounding of the sum of the squared norms.
+    result = score.score_labels(reader, labels, 40, chunk_bytes=500, threads=3)
+    assert result.inertia == pytest.approx(reference.inertia, rel=1e-12)
+
+
+def test_label_out_of_the_clusters_in_the_loop():
+    from inertia_scorer import _sums
+
+    X = np.ones((5, 3), dtype=np.float32)
+    labels = np.array([[0, 1, 2, 1, 0], [0, 7, 0, 0, 0]], dtype=np.uint32)
+    offsets = np.array([0, 3, 5], dtype=np.int64)
+    sums, counts = np.zeros((5, 3)), np.zeros(5, dtype=np.int64)
+
+    # The label 7 of the second array is skipped, and nothing is written out
+    # of `sums`.
+    assert not _sums.add_dense(X, labels, offsets, sums, counts, 0, 1)
+    np.testing.assert_array_equal(counts, [2, 2, 1, 4, 0])
+    np.testing.assert_array_equal(sums, counts[:, None] * np.ones(3))
+
+
+@pytest.mark.parametrize("save", [np.savez, np.savez_compressed])
+def test_labels_of_a_file_are_mapped(make_dataset, tmp_path, save):
+    X = dense_data()
+    dataset = make_dataset(X)
+    rng = np.random.default_rng(1)
+    labels = {k: rng.integers(0, k, len(X)).astype(np.uint32) for k in (4, 16)}
+    path = tmp_path / "submission.npz"
+    save(path, **{str(k): array for k, array in labels.items()})
+
+    read = dict(score.read_labels(replace(dataset, n_clusters=(4, 16)), path))
+
+    assert list(read) == [4, 16]
+    for k, array in read.items():
+        # Only the arrays that are not compressed can be mapped.
+        assert isinstance(array, np.memmap) == (save is np.savez)
+        np.testing.assert_array_equal(array, labels[k])
+    scores = score.score_submission("toy", path, data_dir=tmp_path)
+    for result in scores:
+        expected = brute_force_inertia(X, labels[result.n_clusters])
+        assert result.inertia == pytest.approx(expected, rel=1e-9)
 
 
 def test_chunks_cover_the_rows(make_dataset, tmp_path):

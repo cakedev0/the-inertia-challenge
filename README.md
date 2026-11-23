@@ -46,7 +46,8 @@ pip install -e "packages/inertia-scorer[download]"
 The repository has two packages, in `packages/`:
 
 - `inertia-scorer`: the datasets and the scoring, with the commands
-  `inertia-download`, `inertia-score` and `inertia-listener`. It only needs NumPy and SciPy. The
+  `inertia-download`, `inertia-score` and `inertia-listener`. It only needs NumPy and SciPy, and a C
+  compiler to install it from the sources (its loops are in Cython). The
   `download` extra adds what `inertia-download` needs: h5py, pandas, pyarrow
   and scikit-learn.
 - `inertia-client`: the client of the online scoreboard. It is empty for now.
@@ -128,21 +129,24 @@ which is the center with the lowest inertia for these labels. So labels from
 an approximate assignment are scored as the partition they are, and no
 centers are submitted.
 
-The dataset is read once, by chunks of at most `--chunk-size`, and
+The dataset is read once, by chunks of at most `--chunk-size`, for all the
+numbers of clusters of the submission, and
 
 ```
 inertia = sum_i |x_i|^2 - sum_j |s_j|^2 / n_j
 ```
 
 where `s_j` is the sum of the samples of cluster `j` and `n_j` their number.
-All the sums are in float64. The chunks are added in order, so the result does
-not depend on `--threads`. It depends on `--chunk-size` by rounding only: on
-`deep_1M` with 10,000 clusters, chunks of 0.01 MB to 1 GB give the same
-inertia up to a relative difference of 1e-13, and so does a two-pass float64
-computation (the means, then the distances).
+All the sums are in float64. Each sample is added to the sum of its cluster in
+the order of the dataset, and each cluster belongs to one thread, so the result
+does not depend on `--threads`. It depends on `--chunk-size` by the rounding of
+`sum_i |x_i|^2` only: on `deep_1M` with 10,000 clusters, chunks of 0.01 MB to
+1 GB give the same inertia up to a relative difference of 1e-14, and so does a
+two-pass float64 computation (the means, then the distances).
 
-Memory: the labels, the sums (`8 * n_clusters * n_features` bytes) and about 5
-times the chunk size per thread.
+Memory: the sums (`8 * n_clusters * n_features` bytes, for all the numbers of
+clusters of the submission) and about one chunk per thread. The labels are
+read from the file as they are needed.
 
 ## Listener
 
