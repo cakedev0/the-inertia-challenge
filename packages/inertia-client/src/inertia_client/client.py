@@ -34,13 +34,18 @@ import zipfile
 
 import numpy as np
 
-from inertia_scorer.challenge import get_dataset
-from inertia_scorer.score import check_labels, read_labels
+from inertia_scorer.challenge import Reader, get_dataset
+from inertia_scorer.score import check_labels, read_labels, score_all
 
 DEFAULT_SERVER = "https://the-inertia-challenge-server.arthur-lacote.workers.dev"
 SERVER_VARIABLE = "INERTIA_SERVER"
 TOKEN_VARIABLE = "INERTIA_GITHUB_TOKEN"
 GITHUB = "https://github.com"
+GITHUB_API = "https://api.github.com"
+# The scores that the listener published, one file per dataset.
+RESULTS_URL = (
+    "https://raw.githubusercontent.com/cakedev0/the-inertia-challenge/results/scores"
+)
 DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 # Times a part is sent again when the connection or the server fails.
 RETRIES = 4
@@ -101,7 +106,15 @@ class Client:
     the one that `login` saved.
     """
 
-    def __init__(self, server=None, token=None, github=GITHUB, timeout=120.0):
+    def __init__(
+        self,
+        server=None,
+        token=None,
+        github=GITHUB,
+        timeout=120.0,
+        github_api=GITHUB_API,
+        results_url=RESULTS_URL,
+    ):
         server = server or os.environ.get(SERVER_VARIABLE) or DEFAULT_SERVER
         self.server = server.rstrip("/")
         url = urllib.parse.urlsplit(self.server)
@@ -109,6 +122,8 @@ class Client:
             raise ValueError(f"The server must be in https, got {self.server}.")
         self._token = token or os.environ.get(TOKEN_VARIABLE)
         self.github = github
+        self.github_api = github_api.rstrip("/")
+        self.results_url = results_url.rstrip("/")
         self.timeout = timeout
 
     @property
@@ -202,6 +217,70 @@ class Client:
 
     # Submissions
 
+    def user(self) -> str:
+        """The GitHub login of the user, which is the user of the scores."""
+        request = urllib.request.Request(
+            f"{self.github_api}/user",
+            headers={
+                "Authorization": f"Bearer {self.token}",
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "inertia-client",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                return json.load(response)["login"]
+        except urllib.error.HTTPError as error:
+            raise RuntimeError(
+                f"GitHub did not say who you are ({error.code}). "
+                "Run: inertia-client login"
+            ) from None
+
+    def best_inertia(self, dataset: str, user: str | None = None) -> dict[int, float]:
+        """The lowest inertia of the user on the scoreboard for each number of
+        clusters of `dataset`, as {n_clusters: inertia}. The user is `user`, else
+        the one of the token. Only the scores that the listener published count
+        (the ones that are not far above the best of everyone), so a number of
+        clusters can be missing."""
+        user = user or self.user()
+        request = urllib.request.Request(
+            f"{self.results_url}/{urllib.parse.quote(dataset)}.jsonl",
+            headers={"User-Agent": "inertia-client", "Cache-Control": "no-cache"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                lines = response.read().decode().splitlines()
+        except urllib.error.HTTPError as error:
+            if error.code == 404:  # no score yet for this dataset
+                return {}
+            raise RuntimeError(
+                f"Could not read the scores of {dataset} ({error.code})."
+            ) from None
+        best: dict[int, float] = {}
+        for line in filter(None, lines):
+            score = json.loads(line)
+            if score.get("user") == user:
+                k, inertia = int(score["n_clusters"]), float(score["inertia"])
+                best[k] = min(inertia, best.get(k, inertia))
+        return best
+
+    def improvements(
+        self, dataset: str, path, *, data_dir=None
+    ) -> dict[int, float | None]:
+        """Score the submission `path` here and compare it to the best of the
+        user. Return {n_clusters: best} for the numbers of clusters that improve
+        on it, where `best` is the previous best inertia, None if there is none.
+        The dataset must be downloaded, see `inertia-download`."""
+        reader = Reader(get_dataset(dataset), data_dir)
+        best = self.best_inertia(dataset)
+        labels = dict(read_labels(reader.dataset, path))
+        improved = {}
+        for score in score_all(reader, labels):
+            previous = best.get(score.n_clusters)
+            if previous is None or score.inertia < previous:
+                improved[score.n_clusters] = previous
+        return improved
+
     def submit(
         self,
         dataset: str,
@@ -211,7 +290,10 @@ class Client:
         hardware: str | None = None,
         tags: dict[str, str] | None = None,
         progress=None,
-    ) -> dict:
+        submit_only_improvement: bool = False,
+        data_dir=None,
+        log=None,
+    ) -> dict | None:
         """Check and send a submission. Return it as the server sees it.
 
         `labels` is a `.npz` file, or {n_clusters: array of labels}. `time_s`,
@@ -219,6 +301,12 @@ class Client:
         clustering took for each number of clusters, as {n_clusters: seconds},
         on what, and free text as {"algorithm": "Lloyd"}.
         `progress(done, total)` is called after each part, in bytes.
+
+        With `submit_only_improvement`, the labels are first scored here, on the
+        dataset of `data_dir` (see `inertia-download`), and compared to the best
+        score of the user on the scoreboard: the numbers of clusters that do not
+        improve on it are not sent, and `log(message)` says which. When none
+        improves, nothing is sent and the result is None.
         """
         if isinstance(labels, dict):
             with tempfile.TemporaryDirectory() as directory:
@@ -231,9 +319,51 @@ class Client:
                     hardware=hardware,
                     tags=tags,
                     progress=progress,
+                    submit_only_improvement=submit_only_improvement,
+                    data_dir=data_dir,
+                    log=log,
                 )
         path = Path(labels)
         n_clusters = check_submission(dataset, path)
+        if submit_only_improvement:
+            improved = self.improvements(dataset, path, data_dir=data_dir)
+            for k in n_clusters:
+                if log:
+                    previous = improved.get(k)
+                    log(
+                        f"{k} clusters: "
+                        + (
+                            "not sent, no improvement."
+                            if k not in improved
+                            else "sent, no score yet."
+                            if previous is None
+                            else f"sent, improves on {previous:.9e}."
+                        )
+                    )
+            if not improved:
+                return None
+            if len(improved) < len(n_clusters):
+                with tempfile.TemporaryDirectory() as directory:
+                    kept = Path(directory) / f"{dataset}.npz"
+                    save_labels(
+                        kept,
+                        {
+                            k: array
+                            for k, array in read_labels(get_dataset(dataset), path)
+                            if k in improved
+                        },
+                    )
+                    # The times of the numbers of clusters that are not sent go.
+                    skipped = set(n_clusters) - set(improved)
+                    return self.submit(
+                        dataset,
+                        kept,
+                        time_s=time_s
+                        and {k: s for k, s in time_s.items() if int(k) not in skipped},
+                        hardware=hardware,
+                        tags=tags,
+                        progress=progress,
+                    )
         body = {"dataset": dataset, "size": path.stat().st_size}
         if time_s:
             if not isinstance(time_s, dict):
@@ -397,6 +527,17 @@ def main(argv=None):
         metavar="KEY=VALUE",
         help="free text about the submission, as algorithm=Lloyd (can be repeated)",
     )
+    send.add_argument(
+        "--submit-only-improvement",
+        action="store_true",
+        help="score the labels here (the dataset must be downloaded) and only send "
+        "the numbers of clusters that beat your best score on the scoreboard",
+    )
+    send.add_argument(
+        "--data-dir",
+        help="directory of the datasets, for --submit-only-improvement (default: "
+        "$INERTIA_CHALLENGE_DATA, else ~/.cache/the-inertia-challenge)",
+    )
     send.add_argument("--yes", action="store_true", help="do not ask before sending")
     send.add_argument("--wait", action="store_true", help="wait for the scores")
 
@@ -442,7 +583,12 @@ def main(argv=None):
                 hardware=args.hardware,
                 tags=tags,
                 progress=_progress,
+                submit_only_improvement=args.submit_only_improvement,
+                data_dir=args.data_dir,
+                log=print,
             )
+            if submission is None:
+                sys.exit("Nothing sent: no number of clusters improves on your best.")
             if args.wait:
                 submission = client.wait(submission["id"])
             _print_submission(submission)

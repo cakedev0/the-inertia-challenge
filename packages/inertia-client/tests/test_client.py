@@ -9,8 +9,8 @@ import numpy as np
 import pytest
 
 from inertia_client import Client, ServerError, check_submission, client, save_labels
-from inertia_scorer import challenge
-from inertia_scorer.challenge import Dataset
+from inertia_scorer import challenge, download, score
+from inertia_scorer.challenge import Dataset, Reader
 
 N_SAMPLES = 1000
 PART_SIZE = 3000
@@ -27,6 +27,7 @@ class FakeServer(ThreadingHTTPServer):
         self.failures = []  # statuses to answer to the next uploads of parts
         self.polls = 0  # of the device flow
         self.requests = []
+        self.scores = []  # lines of the published scores of "toy"
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -36,6 +37,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         if status == 429:
             self.send_header("Retry-After", "3600")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def answer_text(self, text):
+        data = text.encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
 
@@ -75,12 +83,22 @@ class Handler(BaseHTTPRequestHandler):
                 return self.answer(200, {"error": "authorization_pending"})
             return self.answer(200, {"access_token": "token-of-ada"})
 
+        # The public scores, and who a token is
+        if self.path == "/scores/toy.jsonl":
+            return self.answer_text(
+                "".join(json.dumps(s) + "\n" for s in server.scores)
+            )
+        if self.path == "/scores/mnist.jsonl":
+            return self.answer(404, {})
+
         # The server
         if self.path == "/":
             return self.answer(200, {"github_client_id": "client-id"})
         token = (self.headers.get("Authorization") or "").removeprefix("Bearer ")
         if token not in server.tokens:
             return self.answer(401, {"error": "This is not a valid GitHub token."})
+        if self.path == "/user":
+            return self.answer(200, {"login": "ada"})
         if self.path == "/submissions":
             body = json.loads(data)
             if any(
@@ -299,3 +317,64 @@ def test_command_line(server, tmp_path, capsys, monkeypatch):
         client.main(["submit", "toy", str(path), "--yes", "--time", "1.5"])
     with pytest.raises(SystemExit, match="Error: A tag is KEY=VALUE"):
         client.main(["submit", "toy", str(path), "--yes", "--tag", "fast"])
+
+
+def toy_data(tmp_path):
+    X = np.random.default_rng(0).standard_normal((N_SAMPLES, 5)).astype(np.float32)
+    dataset = challenge.get_dataset("toy")
+    download._write_dense(dataset, tmp_path, [X[:3], X[3:]])
+    challenge.write_meta(dataset, tmp_path, {"n_samples": N_SAMPLES, "n_features": 5})
+    return Reader(dataset, tmp_path)
+
+
+def test_submit_only_improvement(server, tmp_path):
+    reader = toy_data(tmp_path)
+    inertia = {k: score.score_labels(reader, labels(k), k).inertia for k in (4, 16)}
+    user = Client(
+        server.url,
+        "token-of-ada",
+        github_api=server.url,
+        results_url=server.url + "/scores",
+    )
+    messages = []
+    # Ada is better than the labels for 4 clusters, worse for 16; another user
+    # is better than everyone.
+    server.scores = [
+        {"user": "ada", "n_clusters": 4, "inertia": inertia[4] * 0.9},
+        {"user": "ada", "n_clusters": 4, "inertia": inertia[4] * 2},
+        {"user": "ada", "n_clusters": 16, "inertia": inertia[16] * 1.1},
+        {"user": "bob", "n_clusters": 16, "inertia": 0.0},
+    ]
+    submission = user.submit(
+        "toy",
+        {4: labels(4), 16: labels(16)},
+        time_s={4: 1.0, 16: 2.0},
+        submit_only_improvement=True,
+        data_dir=tmp_path,
+        log=messages.append,
+    )
+
+    assert submission["status"] == "queued"
+    sent = server.submissions[submission["id"]]
+    assert sent["time_s"] == {"16": 2.0}
+    (tmp_path / "received.npz").write_bytes(sent["content"])
+    assert check_submission("toy", tmp_path / "received.npz") == [16]
+    assert messages[0].startswith("4 clusters: not sent")
+    assert messages[1].startswith("16 clusters: sent, improves on")
+
+    # Nothing improves: nothing is sent.
+    server.submissions.clear()
+    server.scores = [{"user": "ada", "n_clusters": 4, "inertia": 0.0}]
+    assert (
+        user.submit(
+            "toy", {4: labels(4)}, submit_only_improvement=True, data_dir=tmp_path
+        )
+        is None
+    )
+    assert not server.submissions
+
+    # No score of the user yet: it is sent.
+    server.scores = []
+    assert user.submit(
+        "toy", {4: labels(4)}, submit_only_improvement=True, data_dir=tmp_path
+    )

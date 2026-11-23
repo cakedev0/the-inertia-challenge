@@ -8,6 +8,38 @@ The repository has the datasets, the scoring, the service that scores the
 submissions and the page of the scoreboard. The server that takes the
 submissions is not there yet.
 
+## Quick start
+
+The easiest task is `year_prediction_msd_standardized` with 5 clusters (515,345
+samples, 90 features, 185 MB). Install the packages, download the dataset, run
+k-means with a random initialization, and submit the labels:
+
+```bash
+pip install inertia-client "inertia-scorer[download]" scikit-learn
+inertia-download year_prediction_msd_standardized
+inertia-client login  # once, with GitHub
+```
+
+```python
+from sklearn.cluster import KMeans
+
+import inertia_client
+from inertia_scorer import Reader, get_dataset
+
+reader = Reader(get_dataset("year_prediction_msd_standardized"))
+X = reader.read(0, reader.shape[0])  # float32 array, (515345, 90)
+
+labels = KMeans(5, init="random", n_init=1).fit_predict(X)
+
+inertia_client.submit("year_prediction_msd_standardized", {5: labels})
+```
+
+The server takes one submission per day and per dataset. To only send the
+numbers of clusters that beat your best score on the scoreboard (the labels are
+scored on your side, so the dataset must be downloaded), add
+`submit_only_improvement=True`, or `--submit-only-improvement` on the command
+line.
+
 ## Tasks
 
 A task is a dataset and a number of clusters. The numbers of clusters of a
@@ -40,7 +72,7 @@ with the same loaders. The DEEP datasets are the ones of the user guide of
 ```bash
 git clone https://github.com/cakedev0/the-inertia-challenge
 cd the-inertia-challenge
-pip install -e "packages/inertia-scorer[download]"
+pip install -e "packages/inertia-scorer[download]" -e packages/inertia-client
 ```
 
 The repository has two packages, in `packages/`:
@@ -50,7 +82,8 @@ The repository has two packages, in `packages/`:
   compiler to install it from the sources (its loops are in Cython). The
   `download` extra adds what `inertia-download` needs: h5py, pandas, pyarrow
   and scikit-learn.
-- `inertia-client`: the client of the online scoreboard. It is empty for now.
+- `inertia-client`: the client of the online scoreboard: `inertia-client` and
+  the `inertia_client` Python package.
 
 ## Download the datasets
 
@@ -196,3 +229,7 @@ To try it with other scores, serve a directory that has the two files of
 ```bash
 python -m http.server --bind 127.0.0.1
 ```
+
+## License
+
+BSD 3-Clause, as scikit-learn. See [LICENSE](LICENSE).

@@ -22,6 +22,14 @@ before sending it: the server takes one submission per day and per dataset.
 are shown on the scoreboard as you give them. The time is for one number of
 clusters: give `--time` once for each of them.
 
+`--submit-only-improvement` scores the labels on your side (with
+`inertia-scorer`, so the dataset must be downloaded, see `--data-dir`) and
+compares each number of clusters to your best published score on the
+scoreboard. The numbers of clusters that do not improve on it are not sent, and
+nothing is sent when none does. A number of clusters where you have no score yet
+is sent. Your scores are the ones of your GitHub login, and only the scores that
+the listener published count: the ones less than 10% above the best.
+
 From Python:
 
 ```python
@@ -30,4 +38,6 @@ import inertia_client
 inertia_client.submit(
     "sift_128", {100: labels}, time_s={100: 23.21}, hardware="M2, 8 cores"
 )
+# Only the numbers of clusters that beat your best score; None if none does.
+inertia_client.submit("sift_128", {100: labels}, submit_only_improvement=True)
 ```

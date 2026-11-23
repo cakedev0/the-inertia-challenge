@@ -7,8 +7,21 @@ name = "inertia-scorer"
 version = "0.1.0"
 description = "Datasets and scoring of the inertia challenge, a scoreboard for k-means"
 readme = "README.md"
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
+authors = [{ name = "Arthur Lacote" }]
+keywords = ["k-means", "clustering", "benchmark", "inertia"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering",
+]
 dependencies = ["numpy", "scipy"]
+
+[project.urls]
+Homepage = "https://github.com/cakedev0/the-inertia-challenge"
+Issues = "https://github.com/cakedev0/the-inertia-challenge/issues"
 
 [project.optional-dependencies]
 download = ["h5py", "pandas", "pyarrow", "scikit-learn"]
