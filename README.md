@@ -1,3 +1,5 @@
+<img src="docs/logo.svg" alt="" width="96" align="right">
+
 # the-inertia-challenge
 
 A scoreboard for k-means: run your algorithm on your side, submit the labels,
