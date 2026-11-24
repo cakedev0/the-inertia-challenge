@@ -26,6 +26,8 @@ class FakeServer(ThreadingHTTPServer):
         self.tokens = {"token-of-ada"}
         self.failures = []  # statuses to answer to the next uploads of parts
         self.polls = 0  # of the device flow
+        self.expiring = False  # the tokens of GitHub expire and are renewed
+        self.refreshes = 0
         self.requests = []
         self.scores = []  # lines of the published scores of "toy"
 
@@ -46,6 +48,16 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+    def tokens(self, token):
+        if not self.server.expiring:
+            return {"access_token": token}
+        return {
+            "access_token": token,
+            "expires_in": 28800,
+            "refresh_token": f"refresh-{self.server.refreshes}",
+            "refresh_token_expires_in": 15897600,
+        }
 
     def view(self, submission):
         result = {key: submission[key] for key in ("id", "dataset", "status", "size")}
@@ -78,10 +90,19 @@ class Handler(BaseHTTPRequestHandler):
                 },
             )
         if self.path == "/login/oauth/access_token":
+            fields = dict(urllib.parse.parse_qsl(data.decode()))
+            assert fields["client_id"] == "client-id"
+            if fields["grant_type"] == "refresh_token":
+                # A refresh token works once, and ends the token before it.
+                if fields["refresh_token"] != f"refresh-{server.refreshes}":
+                    return self.answer(200, {"error": "bad_refresh_token"})
+                server.refreshes += 1
+                server.tokens = {f"token-{server.refreshes}"}
+                return self.answer(200, self.tokens(f"token-{server.refreshes}"))
             server.polls += 1
             if server.polls < 3:
                 return self.answer(200, {"error": "authorization_pending"})
-            return self.answer(200, {"access_token": "token-of-ada"})
+            return self.answer(200, self.tokens("token-of-ada"))
 
         # The public scores, and who a token is
         if self.path == "/scores/toy.jsonl":
@@ -266,7 +287,7 @@ def test_login(server, tmp_path, capsys):
     assert server.polls == 3
     saved = client.token_path()
     assert saved == tmp_path / "config" / "the-inertia-challenge" / "github-token"
-    assert saved.read_text() == "token-of-ada\n"
+    assert json.loads(saved.read_text()) == {"access_token": "token-of-ada"}
     assert stat.S_IMODE(saved.stat().st_mode) == 0o600
     # Another client finds the token.
     with pytest.raises(ServerError, match="no submission with this id"):
@@ -275,6 +296,42 @@ def test_login(server, tmp_path, capsys):
     with pytest.raises(ServerError, match="Run: inertia-client login") as error:
         Client(server.url, "another token").status("id-0")
     assert error.value.status == 401
+
+
+def test_login_renewed(server, monkeypatch):
+    server.expiring = True
+    user = Client(server.url, github=server.url, github_api=server.url)
+    user.login(show=lambda message: None)
+    assert user.user() == "ada" and server.refreshes == 0
+
+    # GitHub only takes a token for 8 hours: it is renewed a bit before, with
+    # the refresh token, which is itself replaced.
+    now = client.time.time()
+    monkeypatch.setattr(client.time, "time", lambda: now + 28800 - 60)
+    assert user.user() == "ada" and server.refreshes == 1
+    saved = json.loads(client.token_path().read_text())
+    assert saved["access_token"] == "token-1" and saved["refresh_token"] == "refresh-1"
+    assert stat.S_IMODE(client.token_path().stat().st_mode) == 0o600
+    assert user.user() == "ada" and server.refreshes == 1
+
+    # Another process renewed it since this client read the file.
+    other = Client(server.url, github=server.url, github_api=server.url)
+    assert other.token == "token-1"
+    monkeypatch.setattr(client.time, "time", lambda: now + 2 * 28800)
+    assert user.user() == "ada" and server.refreshes == 2
+    monkeypatch.setattr(client.time, "time", lambda: now + 2 * 28800 + 60)
+    assert other.user() == "ada" and server.refreshes == 2
+
+    # The refresh token is refused (not used for 6 months, or used elsewhere).
+    monkeypatch.setattr(client.time, "time", lambda: now + 3 * 28800)
+    server.refreshes = 7
+    with pytest.raises(RuntimeError, match="bad_refresh_token.*inertia-client login"):
+        user.user()
+
+    # A token saved by a version that did not keep the refresh token.
+    client.token_path().write_text("token-of-ada\n")
+    server.tokens = {"token-of-ada"}
+    assert Client(server.url, github=server.url, github_api=server.url).user() == "ada"
 
 
 def test_server_in_https():

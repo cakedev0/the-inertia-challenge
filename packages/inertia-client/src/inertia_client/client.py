@@ -47,6 +47,8 @@ RESULTS_URL = (
     "https://raw.githubusercontent.com/cakedev0/the-inertia-challenge/results/scores"
 )
 DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
+# The token is renewed when it has less than this to live, in seconds.
+EXPIRY_MARGIN = 300
 # Times a part is sent again when the connection or the server fails.
 RETRIES = 4
 
@@ -63,6 +65,61 @@ class ServerError(RuntimeError):
 def token_path() -> Path:
     config = os.environ.get("XDG_CONFIG_HOME") or "~/.config"
     return Path(config).expanduser() / "the-inertia-challenge" / "github-token"
+
+
+def _read_login() -> dict | None:
+    """The saved login, with at least "access_token"."""
+    path = token_path()
+    if not path.is_file():
+        return None
+    text = path.read_text().strip()
+    # The file was only the token before the tokens of GitHub expired.
+    return json.loads(text) if text.startswith("{") else {"access_token": text}
+
+
+def _write_login(answer: dict) -> dict:
+    """Save the tokens that GitHub gave in `answer`, and return what is saved."""
+    saved = {"access_token": answer["access_token"]}
+    if "refresh_token" in answer:
+        now = time.time()
+        saved["expires_at"] = now + answer["expires_in"]
+        saved["refresh_token"] = answer["refresh_token"]
+        saved["refresh_token_expires_at"] = now + answer["refresh_token_expires_in"]
+    path = token_path()
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # Created for the user only, before the tokens are in it. Written next to
+    # the file then moved: a refresh token only works once, so a half-written
+    # file would lose the login.
+    temporary = path.with_name(path.name + ".new")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w") as file:
+        file.write(json.dumps(saved) + "\n")
+    os.replace(temporary, path)
+    return saved
+
+
+def _expired(saved: dict) -> bool:
+    return saved.get("expires_at", float("inf")) - EXPIRY_MARGIN < time.time()
+
+
+class _LoginLock:
+    """Only one process renews the saved token at a time: where the system has
+    no `fcntl` (Windows), nothing is locked."""
+
+    def __enter__(self):
+        self.file = None
+        try:
+            import fcntl
+        except ImportError:
+            return self
+        path = token_path().with_name("lock")
+        self.file = open(path, "w")
+        fcntl.flock(self.file, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *error):
+        if self.file:
+            self.file.close()
 
 
 def check_submission(dataset_name: str, path) -> list[int]:
@@ -131,6 +188,7 @@ class Client:
         if url.scheme != "https" and url.hostname not in ("localhost", "127.0.0.1"):
             raise ValueError(f"The server must be in https, got {self.server}.")
         self._token = token or os.environ.get(TOKEN_VARIABLE)
+        self._saved = None  # the login of `login`, when `_token` is not given
         self.github = github
         self.github_api = github_api.rstrip("/")
         self.results_url = results_url.rstrip("/")
@@ -138,12 +196,39 @@ class Client:
 
     @property
     def token(self) -> str:
-        if not self._token:
-            path = token_path()
-            if not path.is_file():
+        if self._token:
+            return self._token
+        if self._saved is None:
+            self._saved = _read_login()
+            if self._saved is None:
                 raise RuntimeError("You are not logged in. Run: inertia-client login")
-            self._token = path.read_text().strip()
-        return self._token
+        if _expired(self._saved) and "refresh_token" in self._saved:
+            self._refresh()
+        return self._saved["access_token"]
+
+    def _refresh(self) -> None:
+        """Renew the saved token, which GitHub only accepts for 8 hours, with
+        its refresh token."""
+        with _LoginLock():
+            # Another process may have renewed it, and the refresh token of
+            # this one would then be refused.
+            self._saved = _read_login() or self._saved
+            if not _expired(self._saved) or "refresh_token" not in self._saved:
+                return
+            client_id = self._request("GET", "/", auth=False)["github_client_id"]
+            answer = self._github(
+                "/login/oauth/access_token",
+                client_id=client_id,
+                grant_type="refresh_token",
+                refresh_token=self._saved["refresh_token"],
+            )
+            if "access_token" not in answer:
+                raise RuntimeError(
+                    "GitHub did not renew your login "
+                    f"({answer.get('error_description') or answer.get('error')}). "
+                    "Run: inertia-client login"
+                )
+            self._saved = _write_login(answer)
 
     def _request(self, method, path, body=None, raw=None, auth=True) -> dict:
         headers = {"User-Agent": "inertia-client"}
@@ -185,7 +270,7 @@ class Client:
     def login(self, show=print, save=True) -> str:
         """Identify the user with the device flow of GitHub: `show` gets the
         code to enter on github.com. Return the token, saved for the next
-        calls."""
+        calls with what renews it when it expires."""
         client_id = self._request("GET", "/", auth=False)["github_client_id"]
         # No scope: the token only says who the user is.
         device = self._github("/login/device/code", client_id=client_id)
@@ -204,17 +289,11 @@ class Client:
                 grant_type=DEVICE_GRANT,
             )
             if "access_token" in answer:
-                self._token = answer["access_token"]
                 if save:
-                    path = token_path()
-                    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-                    # Created for the user only, before the token is in it.
-                    descriptor = os.open(
-                        path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600
-                    )
-                    with os.fdopen(descriptor, "w") as file:
-                        file.write(self._token + "\n")
-                return self._token
+                    self._token, self._saved = None, _write_login(answer)
+                else:
+                    self._token = answer["access_token"]
+                return answer["access_token"]
             error = answer.get("error")
             if error == "slow_down":
                 interval = answer.get("interval", interval + 5)

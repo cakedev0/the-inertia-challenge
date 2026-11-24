@@ -12,7 +12,9 @@ inertia-client status <id> --wait
 
 `login` identifies you with GitHub. It gives a code to enter on github.com and
 keeps a token in `~/.config/the-inertia-challenge/github-token`. The token can
-only tell who you are: it gives no access to your repositories.
+only tell who you are: it gives no access to your repositories. GitHub only
+accepts it for 8 hours, so the client renews it when needed: you log in again
+only after 6 months without using the client.
 
 `submit` checks the file as the server will, without the dataset, then asks
 before sending it: the server takes one submission per day and per dataset.
