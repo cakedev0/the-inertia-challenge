@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "inertia-client"
-version = "0.2.1"
+version = "0.2.2"
 description = "Submit labels to the inertia challenge, a scoreboard for k-means"
 readme = "README.md"
 license = "BSD-3-Clause"
