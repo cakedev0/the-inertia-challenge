@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import http.client
 import os
 from pathlib import Path
 import shutil
@@ -49,6 +50,9 @@ DEEP_URL = (
 DEEP_HEADER = 8
 DEEP_SEGMENT = 128 << 20
 UCI = "https://archive.ics.uci.edu/ml/machine-learning-databases"
+# What a connection that drops raises. `http.client.IncompleteRead`, for a
+# response with a chunked transfer encoding, is not an OSError.
+CONNECTION_ERRORS = (OSError, http.client.HTTPException)
 
 
 def _open(url, first_byte=0, last_byte=None):
@@ -90,7 +94,7 @@ def fetch(url: str, path: Path, retries: int = 5) -> Path:
             failures += 1
             if failures > retries:
                 raise
-        except OSError:
+        except CONNECTION_ERRORS:
             failures += 1
             if failures > retries:
                 raise
@@ -232,7 +236,35 @@ def build_rcv1(raw: Path):
     return fetch_rcv1(data_home=raw).data.tocsr()
 
 
-def _fetch_range(file_descriptor, start, stop, stopped, retries=20):
+class _SharedFile:
+    """A file that several threads write, each at its own positions."""
+
+    def __init__(self, path):
+        self.file = open(path, "r+b")
+        self.lock = threading.Lock()
+
+    def write_at(self, block, position):
+        if hasattr(os, "pwrite"):
+            view = memoryview(block)
+            while view:
+                written = os.pwrite(self.file.fileno(), view, position)
+                view, position = view[written:], position + written
+        else:
+            # Windows has no `os.pwrite`: the threads share the position of the
+            # file.
+            with self.lock:
+                self.file.seek(position)
+                self.file.write(block)
+
+    def close(self):
+        try:
+            self.file.flush()
+            os.fsync(self.file.fileno())
+        finally:
+            self.file.close()
+
+
+def _fetch_range(file, start, stop, stopped, retries=20):
     """Bytes `start` to `stop` of the rows of DEEP1B, written at the same place
     of the local file."""
     position, failures = start, 0
@@ -247,10 +279,10 @@ def _fetch_range(file_descriptor, start, stop, stopped, retries=20):
                     block = r.read(min(BLOCK, stop - position))
                     if not block:
                         break
-                    os.pwrite(file_descriptor, block, position)
+                    file.write_at(block, position)
                     position += len(block)
                     failures = 0
-        except OSError:
+        except CONNECTION_ERRORS:
             failures += 1
             if failures > retries:
                 raise
@@ -284,11 +316,11 @@ def download_deep(dataset: Dataset, directory: Path, jobs: int) -> None:
     )
     meta.update(n_samples=have // row_bytes, n_features=dataset.n_features)
     stopped = threading.Event()
-    file_descriptor = os.open(path, os.O_RDWR)
+    file = _SharedFile(path)
     executor = ThreadPoolExecutor(jobs)
     try:
         futures = [
-            executor.submit(_fetch_range, file_descriptor, start, stop, stopped)
+            executor.submit(_fetch_range, file, start, stop, stopped)
             for start, stop in segments
         ]
         last_print = time.perf_counter()
@@ -302,8 +334,7 @@ def download_deep(dataset: Dataset, directory: Path, jobs: int) -> None:
     finally:
         stopped.set()
         executor.shutdown(wait=True, cancel_futures=True)
-        os.fsync(file_descriptor)
-        os.close(file_descriptor)
+        file.close()
 
 
 BUILDERS = {

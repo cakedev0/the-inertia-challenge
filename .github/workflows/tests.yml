@@ -7,7 +7,12 @@ on:
 
 jobs:
   tests:
-    runs-on: ubuntu-latest
+    name: tests on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -15,4 +20,5 @@ jobs:
           python-version: "3.12"
       - run: pip install -e "packages/inertia-scorer[test]" -e packages/inertia-client ruff
       - run: ruff check . && ruff format --check .
+        if: runner.os == 'Linux'
       - run: pytest
