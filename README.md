@@ -35,10 +35,11 @@ your best score and would be published (see the rules).
 
 [cakedev0.github.io/the-inertia-challenge](https://cakedev0.github.io/the-inertia-challenge/)
 lists the scores of each task, with the time, hardware and tags of each
-submission. The leader board ranks the users by how far their best inertia is
-above the best one, in %, averaged over the tasks that have a score, with the
-weights `sqrt(n_samples * n_clusters)`. A task without a score of the user
-counts as 10% above the best.
+submission. The leader board ranks the users by their score: how far their
+best inertia is above the best one, in %, averaged over the tasks that have a
+score, with the weights `sqrt(n_samples * n_clusters)`. A task without a score
+of the user counts as 10% above the best. It also shows the same mean with no
+weights, over the tasks of the user only.
 
 ## Rules
 

@@ -42,6 +42,12 @@
   a { color: var(--accent); }
   code { font: 13px ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
   .muted { color: var(--ink-2); }
+  .muted b { color: var(--ink); }
+  .help {
+    display: inline-block; width: 15px; margin-left: 4px; border-radius: 50%;
+    border: 1px solid var(--ink-2); font-size: 11px; line-height: 13px;
+    text-align: center; vertical-align: top; cursor: help;
+  }
   label { color: var(--ink-2); }
   .tabs {
     margin-top: 32px; border: 1px solid var(--line); border-radius: 6px;
@@ -63,7 +69,7 @@
   .tab-panel { padding: 16px; }
   .tab-panel h2 { margin-top: 24px; }
   #tables:not(.with-tags) .tags-column { display: none; }
-  .leaderboard { max-width: 640px; margin: 0 auto; }
+  .leaderboard { max-width: 760px; margin: 0 auto; }
   .scroll { overflow-x: auto; }
   table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
   th {
@@ -104,10 +110,13 @@
 
   <h2>Leader board</h2>
   <p class="muted">
-    A task is a dataset and a number of clusters. The users are ranked by the
-    mean, over the tasks that have a score, of how far their best inertia is
-    above the best one. The weight of a task is sqrt(n_samples * n_clusters),
-    and a task without a score of the user counts as 10% above the best.
+    A task is a dataset and a number of clusters.
+    <b id="score-help">The users are ranked by their score: the mean, over the
+    tasks that have a score, of how far their best inertia is above the best
+    one. The weight of a task is sqrt(n_samples * n_clusters), and a task
+    without a score of the user counts as 10% above the best.</b>
+    The last column is the same mean with no weights, over the tasks of the
+    user only.
   </p>
   <div id="leaderboard"></div>
 
@@ -156,6 +165,17 @@ function element(tag, text, className) {
   return node;
 }
 
+// A cell with the user, linked to their GitHub profile: the users are GitHub
+// logins.
+function userCell(name) {
+  const cell = element("td", undefined, "user");
+  cell.title = name;
+  const link = element("a", name);
+  link.href = `https://github.com/${encodeURIComponent(name)}`;
+  cell.append(link);
+  return cell;
+}
+
 async function loadScores(name) {
   const response = await fetch(`${scoresUrl}/${name}.jsonl`, {cache: "no-cache"});
   if (response.status === 404) return [];  // no score yet for this dataset
@@ -194,9 +214,7 @@ function table(dataset, nClusters, rows) {
     const line = body.insertRow();
     if (index === 0) line.className = "best";
     line.append(element("td", String(index + 1), "number"));
-    const user = element("td", row.user, "user");
-    user.title = row.user;
-    line.append(user);
+    line.append(userCell(row.user));
     const inertia = element("td", row.mean_inertia.toPrecision(8), "number");
     inertia.title = `inertia: ${row.inertia}, non-empty clusters: ${row.n_nonempty}`;
     line.append(inertia);
@@ -228,8 +246,9 @@ function table(dataset, nClusters, rows) {
   return section;
 }
 
-// The users ranked by the weighted mean, over the tasks that have a score, of
-// how far their best inertia is above the best one, in %.
+// The users ranked by their score: the weighted mean, over the tasks that have
+// a score, of how far their best inertia is above the best one, in %. The last
+// column is the mean with no weights, over the tasks of the user only.
 function leaderboard() {
   const users = new Map();  // user -> what their scores add up to
   let totalWeight = 0;
@@ -247,11 +266,12 @@ function leaderboard() {
       nTasks += 1;
       const best = Math.min(...bests.values());
       for (const [user, inertia] of bests) {
-        if (!users.has(user)) users.set(user, {sum: 0, weight: 0, tasks: 0});
+        if (!users.has(user)) users.set(user, {sum: 0, weight: 0, tasks: 0, plainSum: 0});
         const entry = users.get(user);
         // A score listed long ago can be further from the best than a missing one.
         const gap = best > 0 ? Math.min(100 * (inertia / best - 1), MISSING_GAP) : 0;
         entry.sum += weight * gap;
+        entry.plainSum += gap;
         entry.weight += weight;
         entry.tasks += 1;
       }
@@ -266,17 +286,27 @@ function leaderboard() {
     user,
     tasks: entry.tasks,
     gap: (entry.sum + MISSING_GAP * (totalWeight - entry.weight)) / totalWeight,
+    submittedGap: entry.plainSum / entry.tasks,
   }));
   rows.sort((a, b) => a.gap - b.gap || a.user.localeCompare(b.user));
 
   const result = element("table");
   const head = result.createTHead().insertRow();
   const columns = [
-    ["#", "number"], ["User", ""], ["Mean above the best", "number"], ["Tasks", "number"],
+    ["#", "number"], ["User", ""], ["Score", "number"], ["Tasks", "number"],
+    ["Mean above the best (submitted tasks)", "number"],
   ];
   for (const [title, className] of columns) {
     const cell = element("th", title, className);
     cell.scope = "col";
+    if (title === "Score") {
+      // The same text as above the table, so that it can't be missed.
+      const help = element("span", "?", "help");
+      help.title = document.getElementById("score-help").textContent.replace(/\s+/g, " ");
+      help.tabIndex = 0;
+      help.setAttribute("aria-label", help.title);
+      cell.append(help);
+    }
     head.append(cell);
   }
   const body = result.createTBody();
@@ -284,11 +314,10 @@ function leaderboard() {
     const line = body.insertRow();
     if (index === 0) line.className = "best";
     line.append(element("td", String(index + 1), "number"));
-    const user = element("td", row.user, "user");
-    user.title = row.user;
-    line.append(user);
+    line.append(userCell(row.user));
     line.append(element("td", `+${row.gap.toFixed(3)}%`, "number"));
     line.append(element("td", `${row.tasks} / ${nTasks}`, "number"));
+    line.append(element("td", `+${row.submittedGap.toFixed(3)}%`, "number"));
   });
   const scroll = element("div", undefined, "scroll");
   scroll.append(result);
