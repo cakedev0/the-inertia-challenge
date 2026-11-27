@@ -2,6 +2,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import re
 import stat
+import sys
 import threading
 import urllib.parse
 
@@ -288,7 +289,9 @@ def test_login(server, tmp_path, capsys):
     saved = client.token_path()
     assert saved == tmp_path / "config" / "the-inertia-challenge" / "github-token"
     assert json.loads(saved.read_text()) == {"access_token": "token-of-ada"}
-    assert stat.S_IMODE(saved.stat().st_mode) == 0o600
+    if sys.platform != "win32":
+        # Windows has no permissions for the group and the others.
+        assert stat.S_IMODE(saved.stat().st_mode) == 0o600
     # Another client finds the token.
     with pytest.raises(ServerError, match="no submission with this id"):
         Client(server.url).status("id-0")
@@ -311,7 +314,9 @@ def test_login_renewed(server, monkeypatch):
     assert user.user() == "ada" and server.refreshes == 1
     saved = json.loads(client.token_path().read_text())
     assert saved["access_token"] == "token-1" and saved["refresh_token"] == "refresh-1"
-    assert stat.S_IMODE(client.token_path().stat().st_mode) == 0o600
+    if sys.platform != "win32":
+        # Windows has no permissions for the group and the others.
+        assert stat.S_IMODE(client.token_path().stat().st_mode) == 0o600
     assert user.user() == "ada" and server.refreshes == 1
 
     # Another process renewed it since this client read the file.
